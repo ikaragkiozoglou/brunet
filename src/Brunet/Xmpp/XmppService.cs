@@ -67,6 +67,24 @@ namespace Brunet.Xmpp {
       remove { _jc.OnAuthenticate -= value; }
     }
 
+    /// <summary>Called when we receive presence message.<summary>
+    public event jabber.client.PresenceHandler OnPresence {
+      add { _jc.OnPresence += value; }
+      remove { _jc.OnPresence -= value; }
+    }
+
+    /// <summary>Called on an authentication error.<summary>
+    public event jabber.protocol.ProtocolHandler OnAuthError {
+      add { _jc.OnAuthError += value; }
+      remove { _jc.OnAuthError -= value; }
+    }
+
+    /// <summary>Called on error.<summary>
+    public event bedrock.ExceptionHandler OnError {
+      add { _jc.OnError += value; }
+      remove { _jc.OnError -= value; }
+    }
+
     /// <summary>Initiate a Xmpp client handle.</summary>
     public XmppService(string username, string password, int port)
     {
@@ -84,6 +102,7 @@ namespace Brunet.Xmpp {
       _jc.KeepAlive = 30F;
       _jc.AutoPresence = false;
       _jc.AutoRoster = false;
+      _jc.AutoStartCompression = false;
       _jc.LocalCertificate = null;
       var rng = new RNGCryptoServiceProvider();
       byte[] id = new byte[4];
@@ -106,6 +125,24 @@ namespace Brunet.Xmpp {
     public void Connect()
     {
       _jc.Connect();
+    }
+
+    public void Connect(string username, string password, string host,
+      int port)
+    {
+      JID jid = new JID(username);
+      _jc.User = jid.User;
+      _jc.Server = jid.Server;
+      _jc.Password = password;
+      //_jc.NetworkHost = host;
+      _jc.Port = port;
+      _jc.Connect();
+    }
+
+    /// <summary>Logs out of the Xmpp Server.</summary>
+    public void Logout()
+    {
+      _jc.Close();
     }
 
     /// <summary>Listen to a specific type of Query through typeof(Element).</summary>
