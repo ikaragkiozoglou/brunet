@@ -1,7 +1,7 @@
 <?xml version="1.0"?>
 <project name="ipop-common" default="build" basedir=".">
-  <description> Builds the ManagedNode dll </description>
-  <property name="root" value="../../.." />
+  <description> Builds the ManagedIpopNodeTranslators dll </description>
+  <property name="root" value="../../../.." />
   <property name="lib.dir" value="${root}/lib"/>
   <property name="bin.dir" value="${root}/bin"/>
   <property name="build.dir" value="build" />
@@ -10,7 +10,7 @@
     <delete dir="${build.dir}" failonerror="true"/>
   </target>
 
-  <target name="build" description="Build Ipop.Managed.dll">
+  <target name="build" description="Build Ipop.Managed.Translation.dll">
     <mkdir dir="${build.dir}" failonerror="true"/>
     <copy todir="${build.dir}" failonerror="true">
       <fileset basedir="${lib.dir}">
@@ -25,18 +25,19 @@
         <include name="ManagedOpenSsl.dll"/>
         <include name="Mono.Security.dll"/>
         <include name="NDesk.Options.dll"/>
+        <include name="ManagedIpopNode.dll"/>
       </fileset>
     </copy>
 
-    <csc target="library" output="${build.dir}/Ipop.Managed.dll" unsafe="true" >
+    <csc target="library" output="${build.dir}/Ipop.Managed.Translation.dll" unsafe="true" >
       <sources failonempty="true">
         <include name="*.cs"/>
         <include name="${root}/src/NetworkPackets/*.cs"/>
         <include name="${root}/src/NetworkPackets/Dns/*.cs"/>
         <include name="../*.cs"/> 
-        <include name="../Tap/*.cs"/>
+        <include name="../../*.cs"/> 
+        <include name="../../Tap/*.cs"/>
         <include name="${root}/src/Brunet/Applications/*.cs"/>
-        <include name="Translation/*.cs"/>
       </sources>
       <references basedir="${build.dir}">
         <include name="Brunet.dll" />
@@ -58,18 +59,20 @@
     <mkdir dir="${lib.dir}" failonerror="true"/>
     <copy todir="${lib.dir}" failonerror="true">
       <fileset basedir="${build.dir}">
-        <include name="Ipop.Managed.dll" />
+        <include name="Ipop.Managed.Translation.dll" />
       </fileset>
     </copy>
   </target>
 
-  <target name="test" description="Test Ipop.Managed">
-    <csc target="library" define="ManagedIpopNUNIT" output="${build.dir}/Ipop.Managed.test.dll" unsafe="true">
+  <target name="test" description="Test Ipop.Managed.Translation">
+    <csc target="library" define="ManagedIpopNodeTranslatorsNUNIT" 
+      output="${build.dir}/Ipop.Managed.Translation.test.dll" unsafe="true">
       <sources failonempty="true">
         <include name="*.cs"/>
         <include name="${root}/src/NetworkPackets/*.cs"/>
         <include name="${root}/src/NetworkPackets/Dns/*.cs"/>
-        <include name="../Tap/*.cs"/>
+        <include name="../../Tap/*.cs"/>
+        <include name="../../*.cs"/>
         <include name="../*.cs"/>
         <include name="${root}/src/Brunet/Applications/*.cs"/>
       </sources>
@@ -98,7 +101,7 @@
 
     <nunit2>
       <formatter type="Plain" />
-      <test assemblyname="${build.dir}/Ipop.Managed.test.dll"/>
+      <test assemblyname="${build.dir}/Ipop.Managed.Translation.test.dll"/>
     </nunit2>
   </target>
 </project>
