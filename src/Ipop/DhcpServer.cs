@@ -142,10 +142,12 @@ namespace Ipop {
       Dictionary<DhcpPacket.OptionTypes, MemBlock> options =
         new Dictionary<DhcpPacket.OptionTypes, MemBlock>();
 
-      options[DhcpPacket.OptionTypes.DOMAIN_NAME] = Encoding.UTF8.GetBytes(Dns.DomainName);
-//  The following option is needed for dhcp to "succeed" in Vista, but they break Linux
-//    options[DhcpPacket.OptionTypes.ROUTER] = reply.ip;
-      options[DhcpPacket.OptionTypes.DOMAIN_NAME_SERVER] = MemBlock.Reference(ServerIP);
+      if(OSDependent.OSVersion == OSDependent.OS.Windows) {
+        options[DhcpPacket.OptionTypes.DOMAIN_NAME] = Encoding.UTF8.GetBytes(Dns.DomainName);
+        //The following option is needed for dhcp to "succeed" in Vista, but they break Linux
+        //options[DhcpPacket.OptionTypes.ROUTER] = reply.ip;
+        options[DhcpPacket.OptionTypes.DOMAIN_NAME_SERVER] = MemBlock.Reference(ServerIP);
+      }
       options[DhcpPacket.OptionTypes.SUBNET_MASK] = MemBlock.Reference(Netmask);
       options[DhcpPacket.OptionTypes.LEASE_TIME] = _lease_time;
       options[DhcpPacket.OptionTypes.MTU] = _mtu;
