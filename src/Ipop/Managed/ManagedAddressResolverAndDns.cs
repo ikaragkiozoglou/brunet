@@ -26,6 +26,7 @@ using Brunet;
 using Brunet.Util;
 using Brunet.Symphony;
 using Brunet.Applications;
+using Brunet.Concurrent;
 using NetworkPackets;
 using NetworkPackets.Dns;
 using System;
@@ -41,31 +42,57 @@ using NUnit.Framework;
 #endif
 
 namespace Ipop.Managed {
+
+  public interface IDnsResolver {
+    string DnsResolve(string name);
+  }
+
   /// <summary>
   /// This class implements Dns, IAddressResolver, IManagedHandler, and
   /// ITranslator. It provides most functionality needed by ManagedIpopNode.
   /// </summary>
   public class ManagedAddressResolverAndDns : Dns, IAddressResolver, ITranslator {
+
+    /// <summary> Udp packet translators.</summary>
     protected IProtocolTranslator<UdpPacket>[] _udp_translators;
-    /// <summary>The node to do ping checks on.</summary>
-    protected StructuredNode _node;
-    /// <summary>Contains ip:hostname mapping.</summary>
-    protected Hashtable _dns_a;
-    /// <summary>Contains hostname:ip mapping.</summary>
-    protected Hashtable _dns_ptr;
+
+    /// <summary>The node to do ping checks on</summary>
+    protected readonly StructuredNode _node;
+
+    /// <summary>Contains ip:hostname mapping</summary>
+    protected readonly Hashtable _dns_a;
+
+    /// <summary>Contains hostname:ip mapping</summary>
+    protected readonly Hashtable _dns_ptr;
+
     /// <summary>Maps MemBlock IP Addresses to Brunet Address as Address</summary>
-    protected Hashtable _ip_addr;
+    protected readonly Hashtable _ip_addr;
+
     /// <summary>Maps Brunet Address as Address to MemBlock IP Addresses</summary>
-    protected Hashtable _addr_ip;
+    protected readonly Hashtable _addr_ip;
+
     /// <summary>Keeps track of blocked addresses</summary>
-    protected Hashtable _blocked_addrs;
+    protected readonly Hashtable _blocked_addrs;
+
     /// <summary>MemBlock of the IP mapped to local node</summary>
-    protected MemBlock _local_ip;
+    protected readonly MemBlock _local_ip;
+
     /// <summary>Helps assign remote end points</summary>
-    protected DhcpServer _dhcp;
+    protected readonly DhcpServer _dhcp;
+
     /// <summary>Array list of multicast addresses</summary>
-    public ArrayList mcast_addr;
-    protected object _sync;
+    public readonly ArrayList mcast_addr;
+
+    /// <summary>Synchronization object</summary>
+    protected readonly object _sync;
+
+    /// <summary>Create a new address resolver</summary>
+    protected readonly WriteOnce<IDnsResolver> _resolver;
+
+    /// <summary>Setter for address resolver</summary>
+    public IDnsResolver Resolver {
+      set { _resolver.Value = value; }
+    }
 
     /// <summary>
     /// Constructor for the class, it initializes various objects
@@ -92,6 +119,7 @@ namespace Ipop.Managed {
         new SipTranslator(local_ip),
         new SsdpTranslator(local_ip)
       };
+      _resolver = new WriteOnce<IDnsResolver>();
     }
 
     // Return string of localIP
@@ -114,7 +142,14 @@ namespace Ipop.Managed {
     /// <param name="name">Takes in name as string to lookup</param>
     /// <returns>The result as a String Ip address</returns>
     public override String AddressLookUp(String name) {
-      return (String)_dns_a[name];
+      string ip = null;
+      if (_resolver.Value != null) {
+        ip = _resolver.Value.DnsResolve(name);
+      }
+      if (ip == null) {
+        ip = (String)_dns_a[name];
+      }
+      return ip;
     }
 
     /**
