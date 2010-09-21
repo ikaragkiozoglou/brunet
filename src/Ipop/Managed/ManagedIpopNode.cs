@@ -73,8 +73,18 @@ namespace Ipop.Managed {
     /// <param name="ipp">A Dns IPPacket to be processed</param>
     /// <returns>A boolean result</returns>
     protected override bool HandleDns(IPPacket ipp) {
-      WriteIP(_dns.LookUp(ipp).ICPacket);
+      System.Threading.ThreadPool.QueueUserWorkItem(HandleDnsCallback, ipp);
       return true;
+    }
+
+    /// <summary>
+    /// Dns request is handled by threadpool to avoid blocking main ipop
+    /// processing thread
+    /// </summary>
+    /// <param name="state">State object is DNS request packet</param>
+    protected void HandleDnsCallback(object state) {
+      IPPacket ipp = state as IPPacket;
+      WriteIP(_dns.LookUp(ipp).ICPacket);
     }
 
     /// <summary>
