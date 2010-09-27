@@ -32,10 +32,6 @@ using Brunet.Util;
 namespace Ipop.SocialVPN {
 
   public class HttpInterface {
-    protected const string JSURL = "socialvpn.js";
-
-    protected const string JSURLDNS = "socialdns.js";
-
     public event EventHandler ProcessEvent;
 
     protected readonly HttpListener _listener;
@@ -52,13 +48,6 @@ namespace Ipop.SocialVPN {
       _running = false;
     }
 
-    protected static string GetHtmlText(string url) {
-      return "<!DOCTYPE html PUBLIC \"-//W3C//DTD XHTML 1.0 Strict//EN\" " +
-       "\"http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd\">" +
-       "<head></head><body><script type=\"text/javascript\" src=\"" + 
-       url + "\"></script></body></html>";
-    }
-
     protected string Process(Dictionary<string, string> request) {
       EventHandler process_event = ProcessEvent;
       string response = String.Empty;
@@ -67,7 +56,7 @@ namespace Ipop.SocialVPN {
           process_event(request, EventArgs.Empty);
           response = request["response"];
         } catch (Exception e) {
-          response = e.ToString();
+          response = SocialUtils.ObjectToXml<string>(e.Message);
         }
       }      
       return response;
@@ -100,24 +89,24 @@ namespace Ipop.SocialVPN {
           }
           Console.WriteLine(e);
         }
+
         HttpListenerRequest request = context.Request;
         HttpListenerResponse response = context.Response;
-        string responseString = String.Empty;
-        byte[] buffer = null;
+
+        string responseString;
         response.ContentType = "text/xml";
 
-        if (request.RawUrl == "/state.xml") {
+        if (request.RawUrl.StartsWith("/state.xml?")) {
+          string getData = request.RawUrl.Substring(11);
+          responseString = Process(SocialUtils.DecodeUrl(getData));
+        }
+        else if (request.RawUrl == "/state.xml") {
           StreamReader reader = new StreamReader(request.InputStream,
                                                  request.ContentEncoding);
 
           string postData = reader.ReadToEnd();
           request.InputStream.Close();
           reader.Close();
-          
-          ProtocolLog.WriteIf(SocialLog.SVPNLog, String.Format(
-                              "HTTP API: {0} {1}",
-                              DateTime.Now.TimeOfDay, postData));
-          
           responseString = Process(SocialUtils.DecodeUrl(postData));
         }
         else if (request.RawUrl == "/socialvpn.js") {
@@ -144,18 +133,38 @@ namespace Ipop.SocialVPN {
           }
           response.ContentType = "text/css";
         }
+        else if (request.RawUrl == "/jquery-ui.css") {
+          using (StreamReader text = new StreamReader("jquery-ui.css")) {
+            responseString = text.ReadToEnd();
+          }
+          response.ContentType = "text/css";
+        }
+        else if (request.RawUrl == "/jquery.js") {
+          using (StreamReader text = new StreamReader("jquery.js")) {
+            responseString = text.ReadToEnd();
+          }
+          response.ContentType = "text/javascript";
+        }
+        else if (request.RawUrl == "/jquery-ui.js") {
+          using (StreamReader text = new StreamReader("jquery-ui.js")) {
+            responseString = text.ReadToEnd();
+          }
+          response.ContentType = "text/javascript";
+        }
         else if (request.RawUrl == "/sdns") {
-          responseString = GetHtmlText(JSURLDNS);
+          using (StreamReader text = new StreamReader("socialdns.html")) {
+            responseString = text.ReadToEnd();
+          }
           response.ContentType = "text/html";
         }
         else {
-          responseString = GetHtmlText(JSURL);
+          using (StreamReader text = new StreamReader("socialvpn.html")) {
+            responseString = text.ReadToEnd();
+          }
           response.ContentType = "text/html";
         }
 
-        if ( buffer == null && responseString != null) {
-          buffer = System.Text.Encoding.UTF8.GetBytes(responseString);
-        }
+        byte[] buffer = System.Text.Encoding.UTF8.GetBytes(responseString);
         response.ContentLength64 = buffer.Length;
         response.AddHeader("Cache-Control", "No-cache");
         System.IO.Stream output = response.OutputStream;

@@ -21,21 +21,18 @@ THE SOFTWARE.
 */
 
 using System;
-using System.Collections;
-using System.Collections.Generic;
-using System.Text;
 using System.Xml;
-
-using System.Net.Security;
-using System.Security.Cryptography;
-using System.Security.Cryptography.X509Certificates;
+using System.Collections.Generic;
+using System.Threading;
 
 using jabber;
 using jabber.client;
+using jabber.protocol;
 using jabber.protocol.client;
-using jabber.protocol.iq;
-using jabber.connection;
-using bedrock.util;
+
+using Brunet.Collections;
+using Brunet.Xmpp;
+using Brunet.Concurrent;
 
 #if SVPN_NUNIT
 using NUnit.Framework;
@@ -43,184 +40,163 @@ using NUnit.Framework;
 
 namespace Ipop.SocialVPN {
 
-  public enum StatusTypes {
-    Online,
-    Offline,
-    Relay,
-    Failed
+  public class SvpnMsg : Element
+  {
+    public const string NAMESPACE = "Ipop:SocialVPN:Message";
+    public const string DATA = "data";
+
+    public SvpnMsg(XmlDocument doc, string data) : 
+      base("query", NAMESPACE, doc)
+    {
+      SetElem(DATA, data);
+    }
+
+    public SvpnMsg(string prefix, XmlQualifiedName qname, 
+      XmlDocument doc) : base(prefix, qname, doc)
+    {
+    }
+
+    public string Data { get { return GetElem(DATA); } }
   }
 
-  public class JabberNetwork {
+  public class SvpnFactory : jabber.protocol.IPacketTypes
+  {
+    private static QnameType[] _s_qnt = new QnameType[] {
+      new QnameType("query", SvpnMsg.NAMESPACE, typeof(SvpnMsg)),
+    };
 
-    public const string SVPNKEYNS = "jabber:iq:svpnkey";
+    QnameType[] IPacketTypes.Types { get { return _s_qnt; } }
 
-    public const string SVPNRESOURCE = "SVPN_XMPP";
-
-    protected readonly JabberClient _jclient;
-
-    protected readonly RosterManager _rman;
-
-    protected readonly SocialNode _node;
-
-    public JabberNetwork(string network_host, string jabber_port,
-      bool autoFriend, SocialNode node) {
-
-      _jclient = new JabberClient();
-      _jclient.Port = Int32.Parse(jabber_port);
-      _jclient.NetworkHost = network_host;
-      _jclient.AutoReconnect = 30F;
-      _jclient.AutoStartTLS = true;
-      _jclient.AutoStartCompression = false;
-      _jclient.KeepAlive = 30F;
-      _jclient.AutoPresence = true;
-      _jclient.AutoRoster = false;
-      _jclient.LocalCertificate = null;
-      Random rand = new Random();
-      _jclient.Resource = SVPNRESOURCE + rand.Next(Int32.MaxValue);
-
-      _jclient.OnAuthenticate += HandleOnAuthenticate;
-      _jclient.OnPresence += HandleOnPresence;
-      _jclient.OnIQ += HandleOnIQ;
-      _jclient.OnInvalidCertificate += 
-        new RemoteCertificateValidationCallback(HandleInvalidCert);
-      
-      _jclient.OnError += HandleOnError;
-      _jclient.OnAuthError += HandleOnAuthError;
-      _jclient.OnReadText += HandleOnReadText;
-      _jclient.OnWriteText += HandleOnWriteText;
-
-      _rman = null;
-      _node = node;
-
-      if(autoFriend) {
-        _rman = new RosterManager();
-        _rman.Stream = _jclient;
-        _rman.AutoAllow = jabber.client.AutoSubscriptionHanding.AllowAll;
-      }
+    public static void HandleStreamInit(object sender, ElementStream stream)
+    {
+      stream.AddFactory(new SvpnFactory());
     }
-    
-    protected void HandleOnAuthError(object sender, System.Xml.XmlElement rp) {
-      UpdateStatus(StatusTypes.Failed);
-      Console.WriteLine(rp.OuterXml);
+  }
+
+  public class JabberNetwork : ISocialNetwork {
+
+    public enum PacketTypes {
+      Request,
+      Reply
     }
 
-    protected void HandleOnError(object sender, Exception ex){
-      Console.WriteLine(ex.ToString());
+    public const char DELIM = '_';
+
+    public const int PUB_PERIOD = 60000;
+
+    protected ImmutableDictionary<string, string> _addresses;
+
+    protected ImmutableDictionary<string, string> _fingerprints;
+
+    protected readonly XmlDocument _doc;
+
+    protected readonly XmppService _xmpp;
+
+    protected readonly int _port;
+
+    protected readonly string _data;
+
+    protected readonly string _host;
+
+    protected readonly Timer _timer;
+
+    protected string _message;
+
+    public string Message { get { return _message; }}
+
+    public IDictionary<string, string> Addresses {
+      get { return _addresses; }
     }
 
-    protected void HandleOnAuthenticate(object sender) {
-      UpdateStatus(StatusTypes.Online);
-      Presence pres = new Presence(_jclient.Document);
-      pres.Show = "dnd";
-      pres.Status = "Chat Disabled";
-      _jclient.Write(pres);
+    public IDictionary<string, string> Fingerprints {
+      get { return _fingerprints; }
     }
 
-    protected bool HandleInvalidCert(object sender, X509Certificate cert, 
-      X509Chain chain, SslPolicyErrors errors) {
-      string cert_info = String.Format("\nXMPP Server Data\n" + 
-                         "Subject: {0}\nIssuer: {1}\n" + 
-                         "SHA1 Fingerprint: {2}\n", cert.Subject, cert.Issuer,
-                         cert.GetCertHashString());
-      byte[] cert_data = Encoding.UTF8.GetBytes(cert_info);
-      string path = _jclient.Server + "-server-cert-data.txt";
-      SocialUtils.WriteToFile(cert_data, path);
-      return true;
+    public JabberNetwork(string uid, string password, 
+      string host, string port, string fingerprint, string address) {
+      _addresses = ImmutableDictionary<string, string>.Empty;
+      _fingerprints = ImmutableDictionary<string, string>.Empty;
+      _doc = new XmlDocument();
+      _port = Int32.Parse(port);
+      _host = host;
+      _data = fingerprint + DELIM + address;
+      _message = "Offline";
+      _timer = new Timer(TimerHandler, null, PUB_PERIOD, PUB_PERIOD);
+
+      _xmpp = new XmppService(uid, password, _port);
+      _xmpp.Register(typeof(SvpnMsg), HandleSvpnMsg);
+      _xmpp.OnStreamInit += SvpnFactory.HandleStreamInit;
+      _xmpp.OnAuthenticate += HandleAuthenticate;
+      _xmpp.OnAuthError += HandleAuthError;
+      _xmpp.OnPresence += HandlePresence;
+      _xmpp.OnError += HandleError;
     }
 
-    protected void HandleOnReadText(object sender, string txt) {
-#if SVPN_NUNIT
-      Console.WriteLine("RECV: " + txt);
-#endif
+    protected void HandleAuthenticate(object sender) {
+      _message = "Online as " + _xmpp.JID.User + "@" + _xmpp.JID.Server;
     }
 
-    protected void HandleOnWriteText(object sender, string txt) {
-#if SVPN_NUNIT
-      Console.WriteLine("SENT: " + txt);
-#endif
+    protected void HandleAuthError(object sender, XmlElement rp) {
+      _message = "Login Failed";
     }
 
-    protected void HandleOnPresence(Object sender, Presence pres) {
+    protected void HandleError(object sender, Exception e) {
+      _message = "error occured";
+    }
+
+    protected void HandlePresence(object sender, Presence pres) {
       if(pres.From.Resource != null && 
-         pres.From != _jclient.JID &&
-         pres.From.Resource.StartsWith(SVPNRESOURCE)) {
-        IQ iq = new IQ(_jclient.Document);
-        iq.To = pres.From;
-        iq.From = _jclient.JID;
-        iq.Query = _jclient.Document.CreateElement(null, "query", SVPNKEYNS);
-        _jclient.Write(iq);
+        pres.From != _xmpp.JID && 
+        pres.From.Resource.StartsWith(XmppService.RESOURCE_NS)) {
+        string data = _data + DELIM + PacketTypes.Request.ToString();
+        _xmpp.SendTo(new SvpnMsg(_doc, data), pres.From);
       }
     }
 
-    protected void HandleOnIQ(Object sender, IQ iq) {
-      if(iq.Query != null && iq.Query.NamespaceURI != null && 
-         iq.Query.NamespaceURI == SVPNKEYNS) {
-        if(iq.Type == IQType.get) {
-          iq = iq.GetResponse(_jclient.Document);
-          iq.Query.SetAttribute("value", GetQueryResponse());
-          _jclient.Write(iq);
-        }
-        else if(iq.Type == IQType.result) {
-          string uid = iq.From.User + "@" + iq.From.Server;
-          ProcessResponse(iq.Query.GetAttribute("value"), uid);
-        }
+    public void HandleSvpnMsg(Element msg, JID from) {
+      SvpnMsg request = msg as SvpnMsg;
+      if(request == null) {
+        return;
+      }
+
+      string[] parts = request.Data.Split(DELIM);
+      string jid = from.User + "@" + from.Server;
+
+      if(!_fingerprints.ContainsKey(parts[1])) {
+        _fingerprints = _fingerprints.InsertIntoNew(parts[1], parts[0]);
+      }
+
+      if(!_addresses.ContainsKey(jid)) {
+        _addresses = _addresses.InsertIntoNew(parts[1], jid);
+      }
+
+      if(parts[2] == PacketTypes.Request.ToString() && _xmpp.JID != from) {
+        string data = _data + DELIM + PacketTypes.Reply.ToString();
+        _xmpp.SendTo(new SvpnMsg(_doc, data), from);
       }
     }
 
-    protected void UpdateStatus(StatusTypes status) {
-#if SVPN_NUNIT
-#else
-      _node.UpdateStatus(status);
-#endif
+    protected void Publish() {
+      if(_xmpp != null && _xmpp.IsAuthenticated) {
+        string data = _data + DELIM + PacketTypes.Request.ToString();
+        _xmpp.SendBroadcast(new SvpnMsg(_doc, data));
+      }
     }
 
-    protected string GetQueryResponse() {
-#if SVPN_NUNIT
-      return "";
-#else
-      return _node.LocalUser.Certificate;
-#endif
+    public void TimerHandler(object obj) {
+      Publish();
     }
 
-    protected void ProcessResponse(string cert, string uid) {
-#if SVPN_NUNIT
-#else
-      _node.AddCertificate(cert, uid);
-#endif
-    }
-
-    public void Login(string username, string password) {
-      JID jid = new JID(username);
-      _jclient.User = jid.User;
-      _jclient.Server = jid.Server;
-      _jclient.Password = password;
-      _jclient.Connect();
+    public void Login(string uid, string password) {
+      if(_message != "Online") {
+        _xmpp.Connect(uid, password, _host, _port);
+        _message = "...connecting...";
+      }
     }
 
     public void Logout() {
-      _jclient.Close();
-      UpdateStatus(StatusTypes.Offline);
-    }
-
-    public void ProcessHandler(Object obj, EventArgs eargs) {
-      Dictionary <string, string> request = (Dictionary<string, string>)obj;
-      string method = String.Empty;
-      if (request.ContainsKey("m")) {
-        method = request["m"];
-      }
-
-      switch(method) {
-        case "jabber.login":
-          Login(request["uid"], request["pass"]);
-          break;
-
-        case "jabber.logout":
-          Logout();
-          break;
-
-        default:
-          break;
-      }
+      _xmpp.Logout();
+      _message = "Offline";
     }
 
   }
@@ -230,13 +206,54 @@ namespace Ipop.SocialVPN {
   public class JabberNetworkTester {
     [Test]
     public void JabberNetworkTest() {
-      JabberNetwork jabber = new JabberNetwork(null, "5222", true, null);
-      Console.Write("Please enter jabber id and password: ");
-      string input = Console.ReadLine();
-      string[] parts = input.Split(' ');
-      jabber.Login(parts[0], parts[1]);
-      Console.ReadLine();
-      jabber.Logout();
+      string uid = "ptony82@ufl.edu";
+      string password = "password";
+      string host = "host";
+      string port = "5222";
+      string fpr = "fingerprint";
+      string address = "adddress";
+      JabberNetwork network = new JabberNetwork(uid, password, host, port,
+        fpr, address);
+
+      Random rand = new Random();
+      XmlDocument doc = new XmlDocument();
+
+      string fpr1 = rand.NextDouble().ToString();
+      string addr1 = rand.NextDouble().ToString();
+      string data1 = fpr1 + JabberNetwork.DELIM + addr1 +
+        JabberNetwork.DELIM + JabberNetwork.PacketTypes.Request.ToString();
+
+      string fpr2 = rand.NextDouble().ToString();
+      string addr2 = rand.NextDouble().ToString();
+      string data2 = fpr2 + JabberNetwork.DELIM + addr2 +
+        JabberNetwork.DELIM + JabberNetwork.PacketTypes.Reply.ToString();
+
+      JID from = new JID("ptony82@ufl.edu");
+      SvpnMsg msg1 = new SvpnMsg(doc, data1);
+      SvpnMsg msg2 = new SvpnMsg(doc, data2);
+      string jid = from.User + "@" + from.Server;
+
+      network.HandleSvpnMsg(msg1, from);
+
+      Assert.AreEqual(network.Addresses[addr1], jid);
+      Assert.AreEqual(network.Fingerprints[addr1], fpr1);
+      
+      network.HandleSvpnMsg(msg1, from);
+
+      Assert.AreEqual(network.Addresses[addr1], jid);
+      Assert.AreEqual(network.Fingerprints[addr1], fpr1);
+      
+      network.HandleSvpnMsg(msg2, from);
+
+      Assert.AreEqual(network.Addresses[addr2], jid);
+      Assert.AreEqual(network.Fingerprints[addr2], fpr2);
+
+      network.HandleSvpnMsg(msg2, from);
+
+      Assert.AreEqual(network.Addresses[addr2], jid);
+      Assert.AreEqual(network.Fingerprints[addr2], fpr2);
+      
+
     }
   } 
 #endif

@@ -40,80 +40,161 @@ body {
   text-decoration: underline;
 }
 
-#main_body {
+#maindiv {
   margin: auto;
   width: 800px;
 }
 
-#user_content {
+#userdiv {
   margin: 5px;
   padding: 5px;
-  border-bottom: 1px dashed #CCCCCC;
-  height: 75px;
+  height: 85px;
 }
 
-#user_content h2 {
-  padding: 5px;
+#userpicdiv {
+  float: left;
+  margin: 5px 15px 5px 5px;
+}
+
+#usersubdiv {
+  float: left;
+}
+
+#usersubdiv h2 {
+  padding: 2px;
+  margin: 2px;
   font-size: 24px;
+  font-weight: bold;
 }
 
-#user_content em {
+#usersubdiv h2 span {
   font-weight: normal;
   color: #999999;
 }
 
-#main_content {
-  color: #666666;
+#usersubdiv span {
+  padding: 2px;
+  margin: 2px;
+  font-weight: normal;
+  color: #999999;
 }
 
-#main_content table {
-  width: 100%;
-  margin: 0px;
-  padding: 0px;
-  color: #333333;
+#usersubdiv p {
+  padding: 2px;
+  margin: 2px;
+  color: #3B5998;
 }
 
-#main_content td {
-  border-bottom: 1px dashed #CCCCCC;
-  padding: 10px;
-  vertical-align: top;
-}
-
-#tmp_content {
+#inputdiv {
   margin: auto;
   width: 80%;
   font-size: 12px;
 }
 
-#tmp_content input, #tmp_content textarea {
+#inputdiv input {
   margin: 10px 0px 10px 0px;
   padding: 5px;
   border: 1px dashed #CCCCCC;
   width: 100%;
 }
 
-#tmp_content button {
+#inputdiv button {
   margin: 0px 0px 20px 0px;
 }
 
-.f_name {
+#maindiv {
+  color: #666666;
+}
+
+#maindiv table {
+  width: 100%;
+  margin: 0px;
+  padding: 0px;
+  color: #333333;
+}
+
+#maindiv td {
+  border-bottom: 1px solid #CCCCCC;
+  padding: 10px 5px 10px 5px;
+  vertical-align: top;
+}
+
+#inputdiv {
+  margin: auto;
+  width: 80%;
+}
+
+#inputdiv .input {
+  margin: 10px 0px 10px 0px;
+  padding: 5px;
+  border: 1px dashed #CCCCCC;
+  width: 98%;
+  font-size: 18px;
+  height: 20px;
+}
+
+#navdiv {
+  margin: 0 5px 5px 5px;
+  padding: 5px 0px 5px 5px;
+  border-bottom: 1px solid #CCCCCC;
+  border-top: 1px solid #CCCCCC;
+}
+
+#navdiv ul {
+  margin: 0;
+  padding: 0;
+}
+
+#navdiv li {
+  display: inline;
+  font-size: 12px;
+  font-weight: normal;
+  color: #3B5998;
+  padding: 0px 20px 5px 0px;
+}
+
+#navdiv label {
+  padding: 0 0 5px 5px;
+  margin: 0 0 5px 0;
+}
+
+#navdiv input {
+  margin: 0 0 0 0;
+  padding: 5px 0 0 0;
+}
+
+.name {
   font-size: 16px;
   font-weight: bold;
   color: #3B5998;
-  margin: 5px 0px 5px 0px;
+  margin: 0px 0px 5px 0px;
 }
 
-.f_info {
+.name_b {
+  font-size: 16px;
+  font-weight: normal;
   color: #999999;
-  margin: 0px;
-  padding: 2px;
+  margin: 0px 0px 5px 0px;
 }
 
-.f_info2 {
+.name_c {
+  font-size: 16px;
+  font-weight: normal;
+  color: #CC9999;
+  margin: 0px 0px 5px 0px;
+}
+
+.name_d {
+  font-size: 16px;
+  font-weight: normal;
+  color: #000000;
+  margin: 0px 0px 5px 0px;
+}
+
+.info {
+  font-size: 11px;
+  margin: 0px 0px 2px 0px;
   color: #999999;
-  margin: 0px;
-  padding: 2px;
-  color: #3B5998;
 }
 
 img {
@@ -121,20 +202,19 @@ img {
   border: 1px solid #CCCCCC;
 }
 
-.opts_menu {
-  margin: 0px;
+.opts {
+  margin: 2px;
   padding: 0px;
   color: #3B5998;
-  font-size: 10px;
+  font-size: 14px;
   cursor: pointer;
 }
 
-.opts_menu:hover {
+.opts:hover {
   text-decoration: underline;
 }
 
-.f_left {
-  float: left;
-  margin: 5px 15px 5px 5px;
+.inbold {
+  font-weight : bold;
 }
 

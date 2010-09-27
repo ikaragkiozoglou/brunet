@@ -28,28 +28,16 @@ namespace Ipop.SocialVPN {
   /**
    * This class contains definitions for social configurations.
    */
-  public class SocialConfig {
+  public interface ISocialNetwork {
 
-    public string BrunetConfig;
+    string Message { get; }
 
-    public string IpopConfig;
+    IDictionary<string, string> Addresses { get; }
 
-    public string HttpPort;
+    IDictionary<string, string> Fingerprints { get; }
 
-    public string JabberPort;
+    void Login(string uid, string password);
 
-    public string JabberHost;
-
-    public string JabberID;
-
-    public string JabberPass;
-
-    public bool AutoLogin;
-
-    public bool GlobalBlock;
-
-    public bool AutoFriend;
-
-    public bool AutoDns;
+    void Logout();
   }
 }

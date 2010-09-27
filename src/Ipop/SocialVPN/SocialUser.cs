@@ -36,21 +36,19 @@ namespace Ipop.SocialVPN {
 
     public const string PICPREFIX = "http://www.gravatar.com/avatar/";
 
+    public const string PICSUFFIX = "?d=mm";
+
     private WriteOnce<Certificate> _cert;
 
     private WriteOnce<string> _alias;
 
     private WriteOnce<string> _fingerprint;
 
-    private WriteOnce<string> _access;
-
     private WriteOnce<string> _ip;
 
-    private WriteOnce<string> _time;
+    private WriteOnce<string> _pic;
 
     private WriteOnce<string> _status;
-
-    private WriteOnce<string> _pic;
 
     private WriteOnce<string> _certificate;
 
@@ -101,17 +99,7 @@ namespace Ipop.SocialVPN {
 
     public string IP {
       get { return _ip.Value; }
-      set { _ip.Value = value;}
-    }
-
-    public string Time {
-      get { return _time.Value; }
-      set { _time.Value = value; }
-    }
-
-    public string Access {
-      get { return _access.Value; }
-      set { _access.Value = value; }
+      set { _ip.Value = value; }
     }
 
     public string Status {
@@ -127,7 +115,8 @@ namespace Ipop.SocialVPN {
         _cert.Value = new Certificate(certData);
         string uid = _cert.Value.Subject.Email.ToLower();
         _fingerprint.Value = SocialUtils.GetSHA1HashString(certData);
-        _pic.Value = PICPREFIX + SocialUtils.GetMD5HashString(uid);
+        _pic.Value = PICPREFIX + SocialUtils.GetMD5HashString(uid) + 
+          PICSUFFIX;
         _alias.Value = CreateAlias(PCID, uid);
       }
     }
@@ -136,15 +125,17 @@ namespace Ipop.SocialVPN {
       _cert = new WriteOnce<Certificate>();
       _alias = new WriteOnce<string>();
       _fingerprint = new WriteOnce<string>();
-      _access = new WriteOnce<string>();
       _ip = new WriteOnce<string>();
-      _time = new WriteOnce<string>();
-      _status = new WriteOnce<string>();
       _pic = new WriteOnce<string>();
+      _status = new WriteOnce<string>();
       _certificate = new WriteOnce<string>();
     }
 
-    protected static string CreateAlias(string pcid, string uid) {
+    public SocialUser(string certificate) : this(){
+      this.Certificate = certificate;
+    }
+
+    public static string CreateAlias(string pcid, string uid) {
       char[] delims = new char[] {'@','.'};
       string[] parts = uid.Split(delims);
       string alias = String.Empty;
@@ -158,27 +149,6 @@ namespace Ipop.SocialVPN {
     public Certificate GetCert() {
       return _cert.Value;
     }
-
-    public SocialUser WeakCopy() {
-      SocialUser user = new SocialUser();
-      user.Certificate = this.Certificate;
-      return user;
-    }
-
-    public SocialUser ChangedCopy(string ip, string time, string access,
-      string status) {
-      SocialUser user = WeakCopy();
-      user.IP = ip;
-      user.Time = time;
-      user.Access = access;
-      user.Status = status;
-      return user;
-    }
-
-    public SocialUser ExactCopy() {
-      return ChangedCopy(IP, Time, Access, Status);
-    }
-
   }
 
 #if SVPN_NUNIT
@@ -186,7 +156,8 @@ namespace Ipop.SocialVPN {
   public class SocialUserTester {
     [Test]
     public void SocialUserTest() {
-      Assert.AreEqual("test", "test");
+      string alias = SocialUser.CreateAlias("home", "ptony82@gmail.com");
+      Assert.AreEqual(alias, "home.ptony82.gmail.com.sdns");
     }
   } 
 #endif

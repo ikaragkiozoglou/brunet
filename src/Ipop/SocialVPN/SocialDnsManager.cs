@@ -26,316 +26,296 @@ using System.Collections.Generic;
 using System.Text.RegularExpressions;
 
 using Brunet;
+using Brunet.Applications;
 using Brunet.Util;
-using Brunet.Concurrent;
+using Brunet.Collections;
 using Brunet.Messaging;
 using Brunet.Symphony;
+using Brunet.Concurrent;
+using Ipop.Managed;
 
 #if SVPN_NUNIT
 using NUnit.Framework;
+using NMock2;
 #endif
 
 namespace Ipop.SocialVPN {
 
-  public class SocialDnsManager : IRpcHandler {
+  public class SocialDnsManager : IDnsResolver {
 
-    protected readonly Dictionary<string, DnsMapping> _mappings;
+    protected const string STATEPATH = "sdnsstate.xml";
 
-    protected readonly List<DnsMapping> _tmappings;
+    protected ImmutableDictionary<string, DnsMapping> _mappings;
 
+    protected ImmutableDictionary<string, DnsMapping> _tmappings;
+
+    protected readonly WriteOnce<IRpcSender> _sender;
+
+    public IDictionary<string, DnsMapping> Mappings {
+      get { return _mappings; }
+    }
+
+    public IDictionary<string, DnsMapping> Tmappings {
+      get { return _tmappings; }
+    }
+
+    public IRpcSender Sender {
+      get { return _sender.Value; }
+      set { _sender.Value = value; }
+    }
+
+#if SVPN_NUNIT
+    protected readonly ISocialNode _node;
+
+    public SocialDnsManager(ISocialNode node) {
+#else
     protected readonly SocialNode _node;
 
-    protected readonly SocialUser _local_user;
-
-    private int _beat_counter;
-
     public SocialDnsManager(SocialNode node) {
-      _mappings = new Dictionary<string, DnsMapping>();
-      _tmappings = new List<DnsMapping>();
+#endif
       _node = node;
-      _node.RpcNode.Rpc.AddHandler("SocialDNS", this);
-      _local_user = _node.LocalUser;
-      _beat_counter = 0;
-      _node.RpcNode.HeartBeatEvent += HeartBeatHandler;
+      _mappings = ImmutableDictionary<string, DnsMapping>.Empty;
+      _tmappings = ImmutableDictionary<string, DnsMapping>.Empty;
+      _sender = new WriteOnce<IRpcSender>();
+      LoadState();
+      AddDnsMapping(_node.LocalUser.PCID, _node.LocalUser.IP);
     }
 
-    public void HeartBeatHandler(object obj, EventArgs eargs) {
-      if(_beat_counter % 120 == 0) {
-        PingFriends();
-      }
-      _beat_counter++;
-    }
-
-    public void ProcessHandler(Object obj, EventArgs eargs) {
-      Dictionary <string, string> request = (Dictionary<string, string>)obj;
-      string method = String.Empty;
-      if (request.ContainsKey("m")) {
-        method = request["m"];
+    protected string GetAddress(string ip) {
+#if SVPN_NUNIT
+      return "address" + ip;
+#else
+      if(ip == _node.LocalUser.IP) {
+        return _node.LocalUser.Address;
       }
 
-      switch(method) {
-        case "sdns.lookup":
-          SearchFriends(request["query"]);
-          request["response"] = SearchLocalCache(request["query"]);
-          break;
-
-        case "sdns.addmapping":
-          AddMapping(request["mapping"]);
-          request["response"] = GetState();
-          break;
-
-        case "sdns.getstate":
-          request["response"] = GetState();
-          break;
-
-        default:
-          break;
-      }
-    }
-
-    public void HandleRpc(ISender caller, string method, IList args,
-                          object req_state) {
-      object result = null;
-      try {
-        switch(method) {
-          case "SearchMapping":
-            result = SearchMapping((string)args[0], (string)args[1]);
-            break;
-
-          case "AddTmpMapping":
-            result = AddTmpMapping((string)args[0], (string)args[1]);
-            break;
-
-          case "Ping":
-            result = HandlePing((string)args[0], (string)args[1]);
-            break;
-
-          default:
-            result = new InvalidOperationException("Invalid Method");
-            break;
-        }
-      } catch (Exception e) {
-        result = e;
-        ProtocolLog.WriteIf(SocialLog.SVPNLog, e.Message);
-        ProtocolLog.WriteIf(SocialLog.SVPNLog, 
-                            String.Format("RPC HANDLER FAILURE: {0} {1}" + 
-                            DateTime.Now.TimeOfDay, args[0]));
-      }
-      _node.RpcNode.Rpc.SendResult(req_state, result);
-    }
-
-    protected void SendRpcMessage(string address, string method, 
-      string query) {
-      method = "SocialDNS." + method;
-      Address addr = AddressParser.Parse(address);
-      Channel q = new Channel();
-      q.CloseAfterEnqueue();
-      q.CloseEvent += delegate(object obj, EventArgs eargs) {
-        try {
-          RpcResult res = (RpcResult) q.Dequeue();
-          // Result is true if it got there with no problem
-          bool result = (bool) res.Result;
-          if(result) {
-            ProtocolLog.WriteIf(SocialLog.SVPNLog, 
-                          String.Format("RPC REPLY {3}: {0} {1} {2}",
-                          DateTime.Now.TimeOfDay, address, result, method));
-          }
-        } catch(Exception e) {
-          ProtocolLog.WriteIf(SocialLog.SVPNLog, e.Message);
-          ProtocolLog.WriteIf(SocialLog.SVPNLog, 
-                         String.Format("RPC FAILURE {3}: {0} {1} {2}",
-                         DateTime.Now.TimeOfDay, address, query, method));
-        }
-      };
-      ProtocolLog.WriteIf(SocialLog.SVPNLog, 
-                      String.Format("RPC REQUEST {3}: {0} {1} {2}",
-                      DateTime.Now.TimeOfDay, address, query, method));
-
-      ISender sender = new AHExactSender(_node.RpcNode, addr);
-      _node.RpcNode.Rpc.Invoke(sender, q, method, _local_user.Address, query);
-    }
-
-    protected void PingFriends() {
-      SocialUser[] friends = _node.GetFriends();
-      foreach(SocialUser friend in friends) {
-        if(friend.Time == String.Empty) {
-          string time = DateTime.Now.ToString();
-          _node.UpdateFriend(friend.Alias, friend.IP, time, friend.Access,
-            friend.Status);
-        }
-        else if(friend.Access != AccessTypes.Block.ToString()) {
-          DateTime old_time = DateTime.Parse(friend.Time);
-          TimeSpan interval = DateTime.Now - old_time;
-          if(interval.Minutes >= 1) {
-            string status = StatusTypes.Offline.ToString();
-            _node.UpdateFriend(friend.Alias, friend.IP, friend.Time, 
-              friend.Access, status);
-          }
-        }
-        string method = "Ping";
-        SendRpcMessage(friend.Address, method, "request");
-      }
-    }
-
-    protected bool HandlePing(string address, string message) {
-      SocialUser[] friends = _node.GetFriends();
-      foreach(SocialUser friend in friends) {
-        if(friend.Address == address && 
-          friend.Access != AccessTypes.Block.ToString()) {
-          string status = StatusTypes.Online.ToString();
-          string time = DateTime.Now.ToString();
-          _node.UpdateFriend(friend.Alias, friend.IP, time, friend.Access,
-            status);
-          if(message == "request") {
-            string method = "Ping";
-            SendRpcMessage(address, method, "reply");
-          }
-          return true;
+      foreach(SocialUser friend in _node.Friends.Values) {
+        if(friend.IP == ip) {
+          return friend.Address;
         }
       }
-      return false;
+
+      throw new Exception("Invalid IP address");
+#endif
     }
 
-    protected void SearchFriends(string query) {
-      SocialUser[] friends = _node.GetFriends();
-      foreach(SocialUser friend in friends) {
-        if(friend.Access != AccessTypes.Block.ToString()) {
-          string method = "SearchMapping";
-          SendRpcMessage(friend.Address, method, query);
+    protected string GetIP(string address) {
+#if SVPN_NUNIT
+      return address;
+#else
+      if(address == _node.LocalUser.Address) {
+        return _node.LocalUser.IP;
+      }
+
+      SocialUser friend;
+      if(_node.Friends.TryGetValue(address, out friend)) {
+        return friend.IP;
+      }
+      else {
+        throw new Exception("Invalid Address");
+      }
+#endif
+    }
+
+    protected string GetUid(string address) {
+#if SVPN_NUNIT
+      return address;
+#else
+      if(address == _node.LocalUser.Address) {
+        return _node.LocalUser.Uid;
+      }
+
+      SocialUser friend;
+      if(_node.Friends.TryGetValue(address, out friend)) {
+        return friend.Uid;
+      }
+      else {
+        throw new Exception("Invalid Address");
+      }
+#endif
+    }
+
+    public DnsMapping AddDnsMapping(string alias, string ip) {
+      return AddDnsMapping(alias, ip, _node.LocalUser.Uid);
+    }
+
+    public DnsMapping AddDnsMapping(string alias, string ip, string source) {
+      string address = GetAddress(ip);
+      DnsMapping mapping = new DnsMapping(alias, address, ip, source);
+      _mappings = _mappings.InsertIntoNew(mapping.Alias, mapping);
+      return mapping;
+    }
+
+    public void DeleteDnsMapping(string alias) {
+      ImmutableDictionary<string, DnsMapping> old;
+      _mappings = _mappings.RemoveFromNew(alias, out old);
+    }
+
+    public void SearchFriends(string query, IRpcSender sender) {
+      foreach(SocialUser friend in _node.Friends.Values) {
+        if(_node.IsAllowed(friend.Address)) {
+          sender.SendRpcMessage(friend.Address, "SearchMapping", query);
         }
       }
     }
 
-    protected bool AddMapping(string mapping) {
-      string[] parts = mapping.Split(DnsMapping.DELIM);
-      if(parts.Length < 3) {
-        mapping = parts[0] + DnsMapping.DELIM + _local_user.Address + 
-          DnsMapping.DELIM + _local_user.Uid;
-      }
-      DnsMapping tmp = DnsMapping.Create(mapping);
-      if(parts.Length == 4) {
-        tmp.IP = parts[3];
-      }
-      return AddMapping(tmp);
-    }
-
-    protected bool AddMapping(DnsMapping mapping) {
-      _mappings.Add(mapping.Alias, mapping);
-      _node.AddDnsMapping(mapping.Alias, mapping.IP);
-      return true;
-    }
-
-    protected bool SearchMapping(string address, string pattern) {
+    public string SearchMapping(string address, string query, 
+      IRpcSender sender) {
       foreach(string alias in _mappings.Keys) {
-        if(Regex.IsMatch(alias, pattern, RegexOptions.IgnoreCase)) {
+        if(Regex.IsMatch(alias, query, RegexOptions.IgnoreCase)) {
           DnsMapping mapping = _mappings[alias];
-          string method = "AddTmpMapping";
-          SendRpcMessage(address, method, mapping.ToString());
+          sender.SendRpcMessage(address, "AddTmpMapping", mapping.ToString());
         }
       }
-      return true;
+      return _node.LocalUser.Address;
     }
 
-    protected bool AddTmpMapping(string address, string mapping) {
-      DnsMapping new_mapping = DnsMapping.Create(mapping);
-      new_mapping.Referrer = address;
-      return AddTmpMapping(new_mapping);
+    public string AddTmpMapping(string address, string smapping) {
+      string[] parts = smapping.Split(DnsMapping.DELIM);
+      string ip = GetIP(parts[1]);
+      string source = GetUid(address);
+      DnsMapping mapping = new DnsMapping(parts[0], parts[1], ip, source);
+      return AddTmpMapping(mapping);
     }
 
-    protected bool AddTmpMapping(DnsMapping mapping) {
-      SocialUser[] friends = _node.GetFriends();
-      foreach(SocialUser friend in friends) {
-        if(friend.Address == mapping.Address) {
-          mapping.IP = friend.IP;
-          break;
-        }
+    public string AddTmpMapping(DnsMapping mapping) {
+      string id = mapping.ToIDString();
+      if(!_tmappings.ContainsKey(id)) {
+        _tmappings = _tmappings.InsertIntoNew(id, mapping);
       }
-      foreach (DnsMapping tmapping in _tmappings) {
-        if (mapping.Equals(tmapping)) {
-          tmapping.IP = mapping.IP;   //Updates ip
-          return true;
-        }
-      }
-      _tmappings.Add(mapping);
-      return true;
+      return _node.LocalUser.Address;
     }
 
-    protected void ClearResults() {
+    public void ClearResults() {
       _tmappings.Clear();
     }
 
-    protected string SearchLocalCache(string pattern) {
+    public List<DnsMapping> SearchLocalCache(string pattern, bool exact, 
+      bool random) {
       List<DnsMapping> searchlist = new List<DnsMapping>();
-      foreach(DnsMapping mapping in _tmappings) {
+
+      if(pattern == "") {
+        return searchlist;
+      }
+
+      foreach(DnsMapping mapping in _tmappings.Values) {
         if(Regex.IsMatch(mapping.Alias, pattern, RegexOptions.IgnoreCase)) {
           bool mapping_found = false;
           foreach(DnsMapping tmp_mapping in searchlist) {
             if(tmp_mapping.WeakEquals(mapping)) {
               tmp_mapping.Rating++;
+              tmp_mapping.AddResponder(mapping.Source);
               mapping_found = true;
               break;
             }
           }
+          if(exact && pattern != mapping.Alias) {
+            continue;
+          }
           if(!mapping_found) {
-            searchlist.Add(DnsMapping.Create(mapping));
+            DnsMapping new_mapping = mapping.WeakCopy();
+            new_mapping.AddResponder(mapping.Source);
+            searchlist.Add(new_mapping);
           }
         }
       }
-      return GetState(searchlist);
+      if(random) {
+        searchlist.Sort(new RandomMappingComparer());
+      }
+      else {
+        searchlist.Sort(new MappingComparer());
+      }
+      return searchlist;
     }
 
-    protected string GetState() {
-      return SearchLocalCache("");
+    public string DnsResolve(string name) {
+      DnsMapping mapping;
+      if(_mappings.TryGetValue(name, out mapping)) {
+        return mapping.IP;
+      }
+
+      SearchFriends(name, Sender);
+      System.Threading.Thread.Sleep(100);
+
+      string ip = null;
+      List<DnsMapping> list = SearchLocalCache(name, true, true);
+      if(list.Count > 0) {
+        ip = list[0].IP;
+      }
+      return ip;
     }
 
-    protected string GetState(List<DnsMapping> tmappings) {
+    public string GetState(string query) {
+      return GetState(SearchLocalCache(query, false, false), true);
+    }
+
+    protected string GetState(List<DnsMapping> tmappings, bool write) {
       DnsState state = new DnsState();
       state.Mappings = new DnsMapping[_mappings.Count];
       _mappings.Values.CopyTo(state.Mappings, 0);
-      tmappings.Sort(new MappingComparer());
+      Array.Sort(state.Mappings, new MappingComparer());
       state.TmpMappings = tmappings.ToArray();
+
+      if(write) {
+        Utils.WriteConfig(STATEPATH, state);
+      }
+
       return SocialUtils.ObjectToXml<DnsState>(state);
+    }
+
+    public void LoadState() {
+#if !SVPN_NUNIT
+      try {
+        DnsState state = Utils.ReadConfig<DnsState>(STATEPATH);
+        foreach (DnsMapping mapping in state.Mappings) {
+          AddDnsMapping(mapping.Alias, mapping.IP);
+        }
+      }
+      catch {}
+#endif
     }
   }
 
   public class DnsMapping {
 
-    public const char DELIM = '=';
-    public const string MISS = "miss";
+    public const char DELIM = '_';
 
     public string Alias;
     public string Address;
     public string IP;
     public string Source;
-    public string Referrer;
     public int Rating;
+    public List<string> Responders;
 
     public DnsMapping() {}
 
-    public DnsMapping(string alias, string address, string source) {
-      Alias = alias;
+    public DnsMapping(string alias, string address, string ip, string source) {
+      Alias = CheckAlias(alias);
       Address = address;
+      IP = ip;
       Source = source;
       Rating = 1;
-      IP = "0.0.0.0";
-      CheckAlias();
     }
 
-    private void CheckAlias() {
-      if(!Alias.EndsWith("." + SocialNode.DNSSUFFIX)) {
-        Alias = Alias + "." + SocialNode.DNSSUFFIX;
+    public static string CheckAlias(string alias) {
+      string result = alias;
+      if(!alias.EndsWith("." + SocialNode.DNSSUFFIX)) {
+        result = alias + "." + SocialNode.DNSSUFFIX;
+      }
+      return result;
+    }
+
+    public void AddResponder(string source) {
+      if(Responders == null) {
+        Responders = new List<string>();
+      }
+      if(!Responders.Contains(source)) {
+        Responders.Add(source);
       }
     }
 
-    public static DnsMapping Create(string mapping) {
-      string[] parts = mapping.Split(DnsMapping.DELIM);
-      return new DnsMapping(parts[0], parts[1], parts[2]);
-    }
-
-    public static DnsMapping Create(DnsMapping mapping) {
-      DnsMapping new_mapping = DnsMapping.Create(mapping.ToString());
-      new_mapping.IP = mapping.IP;
-      return new_mapping;
+    public DnsMapping WeakCopy() {
+      return new DnsMapping(Alias, Address, IP, null);
     }
 
     public bool WeakEquals(DnsMapping mapping) {
@@ -344,11 +324,15 @@ namespace Ipop.SocialVPN {
 
     public bool Equals(DnsMapping mapping) {
       return (mapping.Alias == Alias && mapping.Address == Address
-        && mapping.Referrer == Referrer);
+        && mapping.Source == Source);
     }
 
     public override string ToString() {
-      return Alias + DELIM + Address + DELIM + Source + DELIM + Rating;
+      return Alias + DELIM + Address + DELIM + Rating;
+    }
+
+    public string ToIDString() {
+      return Alias + DELIM + Address + DELIM + Source;
     }
   }
 
@@ -369,14 +353,111 @@ namespace Ipop.SocialVPN {
     }
   }
 
+  public class RandomMappingComparer : IComparer<DnsMapping> {
+    private readonly Random rand;
 
+    public RandomMappingComparer() {
+      rand = new Random();
+    }
+
+    public RandomMappingComparer(int seed) {
+      rand = new Random(seed);
+    }
+
+    public int Compare(DnsMapping x, DnsMapping y) {
+      int val = y.Rating - x.Rating;
+      if(val == 0) {
+        double sample = rand.NextDouble();
+        if(sample < 0.5) {
+          return -1;
+        }
+        else {
+          return 1;
+        }
+      }
+      else {
+        return val;
+      }
+    }
+  }
 
 #if SVPN_NUNIT
   [TestFixture]
   public class SocialDnsManagerTester {
+
+    [Test]
+    public void DnsMappingTest() {
+      DnsMapping mapping = new DnsMapping("pierre.sdns", "brunet123",
+        "172.31.0.2", "ptony82@ufl.edu");
+
+      mapping.AddResponder("ptony82@gmail.com");
+      mapping.AddResponder("ptony82@yahoo.com");
+      mapping.AddResponder("ptony82@gmail.com");
+
+      Assert.AreEqual(2, mapping.Responders.Count);
+      Assert.AreEqual("ptony82@gmail.com", mapping.Responders[0]);
+      Assert.AreEqual("ptony82@yahoo.com", mapping.Responders[1]);
+
+    }
+
     [Test]
     public void SocialDnsManagerTest() {
-      Assert.AreEqual("test", "test");
+      byte[] certData = SocialUtils.ReadFileBytes("local.cert");
+      string certb64 = Convert.ToBase64String(certData);
+      SocialUser user = new SocialUser(certb64);
+
+      ImmutableDictionary<string, SocialUser> friends =
+        ImmutableDictionary<string, SocialUser>.Empty;
+
+      Mockery mocks = new Mockery();
+      ISocialNode node = mocks.NewMock<ISocialNode>();
+      IRpcSender sender = mocks.NewMock<IRpcSender>();
+
+      Stub.On(node).GetProperty("Friends").Will(
+        Return.Value(friends));
+
+      Stub.On(node).GetProperty("LocalUser").Will(
+        Return.Value(user));
+
+      Stub.On(node).Method("IsAllowed").Will(
+       Return.Value(true));
+
+      Stub.On(sender).Method("SendRpcMessage");
+
+      SocialDnsManager sdm = new SocialDnsManager(node);
+      sdm.Sender = sender;
+
+      sdm.AddDnsMapping("pierre", "172.31.21.1");
+
+      Assert.AreEqual(sdm.Mappings["pierre.sdns"].Address, 
+        "address172.31.21.1");
+
+      sdm.SearchMapping("address", "pierre", sender);
+
+      DnsMapping mapping = new DnsMapping("pierre", "brunet123", "ip", 
+        "source");
+      DnsMapping mapping1 = new DnsMapping("pierre", "brunet124", "ip", 
+        "source2");
+      DnsMapping mapping2 = new DnsMapping("pierre", "brunet124", "ip", 
+        "source3");
+
+      sdm.AddTmpMapping("address", mapping.ToString());
+      sdm.AddTmpMapping("address1", mapping1.ToString());
+      sdm.AddTmpMapping("address2", mapping2.ToString());
+
+      Assert.AreEqual(3, sdm.Tmappings.Values.Count);
+
+      List<DnsMapping> list = sdm.SearchLocalCache("pierre", false, false);
+      Assert.AreEqual(list[0].Address, "brunet124");
+      Assert.AreEqual(list[0].Rating, 2);
+      Assert.AreEqual(list[1].Rating, 1);
+      Assert.AreEqual(list.Count, 2);
+
+      List<DnsMapping> list1 = sdm.SearchLocalCache("pierre.sdns", true, false);
+      Assert.AreEqual(list1.Count, 2);
+      Assert.AreEqual(list1[0].Rating, 2);
+
+      Console.WriteLine(sdm.GetState(""));
     }
   } 
 #endif

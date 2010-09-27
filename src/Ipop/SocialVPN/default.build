@@ -17,10 +17,26 @@
   </target>
 
   <target name="build" description="Build SocialVPN.exe">
+
     <mkdir dir="${build.dir}" failonerror="true"/>
+
     <copy todir="${build.dir}" failonerror="true">
       <fileset basedir="${lib.dir}">
-        <include name="*.dll" />
+        <include name="Brunet.dll" />
+        <include name="Brunet.Security.dll"/>
+        <include name="Brunet.Services.Coordinate.dll"/>
+        <include name="Brunet.Services.Dht.dll" />
+        <include name="Brunet.Services.XmlRpc.dll" />
+        <include name="Brunet.Xmpp.dll"/>
+        <include name="CookComputing.XmlRpcV2.dll" />
+        <include name="jabber-net.dll"/>
+        <include name="zlib.net.dll"/>
+        <include name="ManagedOpenSsl.dll"/>
+        <include name="Mono.Security.dll"/>
+        <include name="NDesk.Options.dll"/>
+        <include name="Ipop.Managed.dll"/>
+        <include name="nunit.framework.dll"/>
+        <include name="NMock2.dll"/>
       </fileset>
     </copy>
 
@@ -28,8 +44,13 @@
       <fileset basedir="${web.dir}">
         <include name="socialvpn.js" />
         <include name="socialvpn.css" />
+        <include name="socialvpn.html" />
         <include name="socialdns.js" />
         <include name="socialdns.css" />
+        <include name="socialdns.html" />
+        <include name="jquery.js" />
+        <include name="jquery-ui.js" />
+        <include name="jquery-ui.css" />
       </fileset>
     </copy>
 
@@ -58,6 +79,7 @@
     output="${build.dir}/SocialVPN.exe">
       <sources failonempty="true">
         <include name="SocialNode.cs"/>
+        <include name="SocialConnectionManager.cs"/>
         <include name="SocialDnsManager.cs"/>
         <include name="SocialUser.cs"/>
         <include name="SocialUtils.cs"/>
@@ -66,21 +88,22 @@
         <include name="HttpInterface.cs"/>
         <include name="AssemblyInfo.cs"/>
         <include name="JabberNetwork.cs"/>
+        <include name="ISocialNetwork.cs"/>
       </sources>
       <references basedir="${build.dir}">
         <include name="Brunet.dll" />
-        <include name="Brunet.Dht.dll" />
-        <include name="Brunet.DhtService.dll" />
-        <include name="Brunet.Security.dll" />
-        <include name="Brunet.IPAddresses.dll" />
-        <include name="Brunet.XmlRpc.dll" />
+        <include name="Brunet.Security.dll"/>
+        <include name="Brunet.Services.Coordinate.dll"/>
+        <include name="Brunet.Services.Dht.dll" />
+        <include name="Brunet.Services.XmlRpc.dll" />
+        <include name="Brunet.Xmpp.dll"/>
         <include name="CookComputing.XmlRpcV2.dll" />
-        <include name="System.Runtime.Remoting.dll" />
-        <include name="System.Web.dll" />
-        <include name="Mono.Posix.dll"/>
+        <include name="jabber-net.dll"/>
+        <include name="ManagedOpenSsl.dll"/>
         <include name="Mono.Security.dll"/>
-        <include name="ManagedIpopNode.dll" />
-        <include name="jabber-net.dll" />
+        <include name="NDesk.Options.dll"/>
+        <include name="Ipop.Managed.dll"/>
+        <include name="System.Web.dll"/>
       </references>
     </csc>
 
@@ -90,12 +113,22 @@
       </sources>
       <references basedir="${build.dir}">
         <include name="Brunet.dll" />
-        <include name="ManagedIpopNode.dll" />
+        <include name="Ipop.Managed.dll" />
         <include name="SocialVPN.exe" />
       </references>
     </csc>
 
-    <nant buildfile="Service/default.build" />
+    <csc target="exe" output="${build.dir}/SocialVPNService.exe">
+      <sources failonempty="true">
+        <include name="Service/*.cs"/>
+      </sources>
+      <references basedir="${build.dir}">
+        <include name="SocialVPN.exe" />
+        <include name="System.Runtime.Remoting.dll"/>
+        <include name="System.Configuration.Install.dll"/>
+        <include name="System.ServiceProcess.dll"/>
+      </references>
+    </csc>
   </target>
 
   <target name="release" description="Create release">
@@ -120,9 +153,10 @@
 
   <target name="test" description="Test SocialVPN">
     <csc target="library" define="SVPN_NUNIT" 
-     output="${build.dir}/SVPN_NUNIT.dll">
+     output="${build.dir}/Ipop.SocialVPN.test.dll">
       <sources failonempty="true">
         <include name="SocialNode.cs"/>
+        <include name="SocialConnectionManager.cs"/>
         <include name="SocialDnsManager.cs"/>
         <include name="SocialUser.cs"/>
         <include name="SocialUtils.cs"/>
@@ -131,6 +165,7 @@
         <include name="HttpInterface.cs"/>
         <include name="AssemblyInfo.cs"/>
         <include name="JabberNetwork.cs"/>
+        <include name="ISocialNetwork.cs"/>
       </sources>
       <references basedir="${build.dir}">
         <include name="Brunet.dll" />
@@ -144,9 +179,11 @@
         <include name="System.Web.dll" />
         <include name="Mono.Posix.dll"/>
         <include name="Mono.Security.dll"/>
-        <include name="ManagedIpopNode.dll" />
+        <include name="Ipop.Managed.dll" />
         <include name="jabber-net.dll" />
-        <include name="NUnit.Framework.dll"/>
+        <include name="Brunet.Xmpp.dll"/>
+        <include name="nunit.framework.dll"/>
+        <include name="NMock2.dll"/>
       </references>
     </csc>
   </target>

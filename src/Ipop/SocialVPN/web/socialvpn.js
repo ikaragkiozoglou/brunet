@@ -20,350 +20,338 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 */
 
-var stateXML = "";
-var refresh_time = 0;
-var global_status = "Offline";
-var local_user;
+var prevState = "";
 
-init();
+$(document).ready(init);
 
 function init() {
-  getState();
+  document.title = "SocialVPN";
   loadPage();
+  loadHeader();
+  loadNav();
+  getState();
   window.setInterval(getState, 15000);
 }
 
-function createElem(itemType, itemHTML, itemID, itemClass, containerName, 
-                    functionName) {
-  var elem = document.createElement(itemType);
-  if (itemID != "") {
-    elem.id = itemID;
-  }
-
-  if (itemClass != "") {
-    elem.className = itemClass;
-  }
-
-  try {
-    elem.innerHTML = itemHTML;
-  } catch (err) {}
-
-  setEvent(elem, functionName);
-
-  if(typeof containerName == 'string') {
-    var container = document.getElementById(containerName); 
-    container.appendChild(elem);
-  }
-  else {
-    containerName.appendChild(elem);
-  }
-  return elem;
-}
-
-function setEvent(elem, functionName) {
-  if(functionName != "") {
-    if(elem.addEventListener) {
-      elem.addEventListener("click", functionName, false);
-    }
-    else if(elem.attachEvent) {
-      elem.attachEvent("onclick", functionName);
-    }
-  }
-}
-
-function getContent(xmlElem) {
-  var content;
-  if(xmlElem.textContent) {
-    content = xmlElem.textContent;
-  }
-  else if(xmlElem.text) {
-    content = xmlElem.text;
-  }
-  return content;
-}
-
-function clearDiv(name) {
-  var div_main_content = document.getElementById(name);
-  div_main_content.innerHTML = "";
-}
-
 function loadPage() {
-  document.title = "SocialVPN"; 
-  var headElement = document.getElementsByTagName('head')[0];
-  var styleSheet = document.createElement('link');
-  styleSheet.setAttribute('rel', 'stylesheet');
-  styleSheet.setAttribute('type', 'text/css');
-  styleSheet.setAttribute('href', 'socialvpn.css');
-  headElement.appendChild(styleSheet);
-
-  document.body.innerHTML = '';
-  var div_wrapper = document.createElement('div');
-  div_wrapper.id = "wrapper";
-  document.body.appendChild(div_wrapper);
-
-  var header = createElem("div", "","header","", div_wrapper, "");
-  var subheader = createElem("div", "", "subheader","", header, "");
-  var main = createElem("div", "", "main_body", "", div_wrapper, "");
-  var tmp_content = createElem("div", "", "user_content", "", main, "");
-  var tmp_content = createElem("div", "", "tmp_content", "", main, "");
-  var main_content = createElem("div", "", "main_content", "", main, "");
+  $("<div/>", {'id' : 'wrapper'}).appendTo("body");
+  $("<div/>", {'id' : 'header'}).appendTo("#wrapper");
+  $("<div/>", {'id' : 'subheader'}).appendTo("#header");
+  $("<div/>", {'id' : 'maindiv'}).appendTo("#wrapper");
+  $("<div/>", {'id' : 'userdiv'}).appendTo("#maindiv");
+  $("<div/>", {'id' : 'inputdiv'}).appendTo("#maindiv");
+  $("<div/>", {'id' : 'navdiv'}).appendTo("#maindiv");
+  $("<div/>", {'id' : 'friendsdiv'}).appendTo("#maindiv");
 }
 
 function loadHeader() {
-  clearDiv('subheader');
-  createElem("h1", "SocialVPN", "", "", "subheader", "");
+  $("<h1/>", {text : 'SocialVPN'}).appendTo("#subheader");
+  var menu = $("<ul/>").appendTo("#subheader");
+  menu.append($("<li/>", {text : 'Login', 'id' : "login", 
+    click : loadLogin}));
+  menu.append($("<li/>", {text : 'Add Friend', click : loadAdd}));
+}
 
-  var menu = createElem("ul", "", "", "", "subheader", "");
-  createElem("li", "", "status_id", "", menu, "");
-  createElem("li", "Add Friend", "", "", menu, addCert);
-  if(global_status == "Online") {
-    createElem("li", "Logout", "login_id", "", menu, makeLogout);
+function loadNav() {
+  var menu = $("<ul/>");
+  menu.appendTo("#navdiv");
+  var item = $("<li/>");
+  item.append($("<input/>", { "type" : "checkbox", id : "Online",
+    "checked" : "true", click : getState}));
+  item.append($("<label/>", {text : "Online Friends"}));
+  menu.append(item);
+  var item = $("<li/>");
+  item.append($("<input/>", { "type" : "checkbox", id : "Offline",
+    "checked" : "true", click : getState}));
+  item.append($("<label/>", {text : "Offline Friends"}));
+  menu.append(item);
+  var item = $("<li/>");
+  item.append($("<input/>", { "type" : "checkbox", id : "Blocked",
+    "checked" : "true", click : getState}));
+  item.append($("<label/>", {text : "Blocked Friends"}));
+  menu.append(item);
+  var item = $("<li/>");
+  item.append($("<input/>", { "type" : "checkbox", id : "Pending",
+    "checked" : "false", click : getState}));
+  item.append($("<label/>", {text : "Pending Friends"}));
+  menu.append(item);
+}
+
+function clearInput() {
+  $("#inputdiv").dialog("close");
+  $("#inputdiv").text("");
+}
+
+function loadStatus() {
+  clearInput();
+  var user = parseUser($("LocalUser", prevState));
+  msg = "P2P Address : " + user.address;
+  $("<p/>", { text: msg}).appendTo("#inputdiv");
+  msg = "Current User Status";
+  $("#inputdiv").dialog({ modal : true, title : msg, width : 700,
+    buttons : { "Close" : clearInput}});
+}
+
+
+function loadLogin() {
+  var stat = $("Message", prevState).text();
+  if(stat.match("Online") != null) {
+    doLogout();
+    return;
   }
-  else {
-    createElem("li", "Login", "login_id", "", menu, loadLogin); 
-  }
-  setStatus(global_status);
+
+  clearInput();
+  var msg;
+
+  $("<label/>", { text : "Username"}).appendTo("#inputdiv");
+  $("<input/>", { 'type' : "text", 'class' : "input",
+    'name' : "user"}).appendTo("#inputdiv");
+  $("<label/>", { text : "Password"}).appendTo("#inputdiv");
+  $("<input/>", { "type" : "password", 'class' : "input",
+    'name' : "pass"}).appendTo("#inputdiv");
+
+  msg = "Login to automatically connect to XMPP friends using SocialVPN";
+  $("#inputdiv").dialog({ modal : true, title : msg, width : 700,
+    buttons : { "Login" : doLogin, "Cancel" : clearInput}});
 }
 
-function loadUser() {
-  clearDiv("user_content");
+function loadAdd() {
+  clearInput();
+  var user = parseUser($("LocalUser", prevState));
+  var msg;
 
-  var user = stateXML.getElementsByTagName('LocalUser')[0]; 
-  var uid = getContent(user.getElementsByTagName('Uid')[0]);
-  var pcid = getContent(user.getElementsByTagName('PCID')[0]);
-  global_status = getContent(user.getElementsByTagName('Status')[0]);
-  var img_src = getContent(user.getElementsByTagName('Pic')[0]);
-  var img_usr = createElem("img", "", "", "f_left", "user_content", ""); 
-  img_usr.setAttribute("src", img_src);
-  img_usr.setAttribute("width", "50");
-  img_usr.setAttribute("height", "50");
-  var innerHTML = uid + " <em>(" + pcid + ")</em>";
-  createElem("h2", innerHTML, "", "", "user_content", "");
-  local_user = uid;
-}
+  msg = "Enter your friend's P2P address";
+  $("<p/>", { text: msg}).appendTo("#inputdiv");
+  $("<input/>", { "class" : "input", 
+    "name" : "address"}).appendTo("#inputdiv");
 
-function loadFriends() {
-  clearDiv("main_content");
-  createElem("table", "", "data_table", "", "main_content", "");
+  msg = "or email this message to your friends:";
+  $("<p/>", { text: msg, "class" : "inbold"}).appendTo("#inputdiv");
 
-  var friends = stateXML.getElementsByTagName('SocialUser');
-  for (var i = 0; i < friends.length; i++) {
-    var uid = getContent(friends[i].getElementsByTagName('Uid')[0]);
-    if(uid == local_user) {
-      uid = "This is you";
-      addFriend(friends[i], uid);
-      addInfo(friends[i], uid);
-    }
-  }
-  for (var i = 0; i < friends.length; i++) {
-    var uid = getContent(friends[i].getElementsByTagName('Uid')[0]);
-    if(uid != local_user) {
-      addFriend(friends[i], uid);
-      addInfo(friends[i], uid);
-    }
-  }
-}
+  msg = "I would like to add you to my SocialVPN network, please paste the \
+         link below in your browser, make sure SocialVPN is running first";
+  $("<p/>", { text: msg}).appendTo("#inputdiv");
 
-function addFriend(friend, uid) {
+  msg = "http://127.0.0.1:58888/state.xml?m=add&a=" + user.address +
+  "&f=" + user.fpr;
+  $("<p/>", { text: msg}).appendTo("#inputdiv");
 
-  var friend_td = document.getElementById(uid);
-  if (friend_td == null) {
- 
-    var new_tr = document.createElement('tr'); 
-    var new_td1 = document.createElement('td');
-    var new_td2 = document.createElement('td');
-    var new_td3 = document.createElement('td');
-    new_td2.setAttribute('width', '100%');
-  
-    var block = 
-      createElem("span", "Block", "", "opts_menu", new_td3, blockFriend);
-    new_td3.appendChild(document.createElement('br'));
-    var unblock = 
-      createElem("span", "Unblock", "", "opts_menu", new_td3, unblockFriend);
+  msg = "- Thank you";
+  $("<p/>", { text: msg}).appendTo("#inputdiv");
 
-    var key = getContent(friend.getElementsByTagName('Uid')[0]);
-    new_td2.id = uid;
-    block.key = key;
-    unblock.key = key;
+  msg = "By logging in XMPP friends are added automatically, but you\
+         can also add friends manually";
 
-    var img_src = getContent(friend.getElementsByTagName('Pic')[0]);
-    var img_usr = document.createElement('img');
-    img_usr.setAttribute("src", img_src);
-    img_usr.setAttribute("width", "30");
-    img_usr.setAttribute("height", "30");
-    new_td1.appendChild(img_usr);
-
-    var info_item = createElem("span", uid, "", "f_name", new_td2, "");
-    new_td2.appendChild(document.createElement('br'));
-
-    var dtTable = document.getElementById('data_table');
-    dtTable.appendChild(new_tr);
-    new_tr.appendChild(new_td1);
-    new_tr.appendChild(new_td2);
-    new_tr.appendChild(new_td3);
-  }
-}
-
-function addInfo(friend, uid) {
-  var friend_td = document.getElementById(uid);
-  var alias = getContent(friend.getElementsByTagName('Alias')[0]);
-  var ip = getContent(friend.getElementsByTagName('IP')[0]);
-  var access = getContent(friend.getElementsByTagName('Access')[0]);
-  var stat = getContent(friend.getElementsByTagName('Status')[0]);
-  var time = getContent(friend.getElementsByTagName('Time')[0]);
-
-  if(access == "Block") {
-    var info = "- " + alias + " - (Blocked)";
-    createElem("p", info, "", "f_info", friend_td, "");
-  }
-  else if( stat == "Online") {
-    var info = "+ " + alias + " - " + ip + " (" + stat + ")";
-    createElem("p", info, "", "f_info2", friend_td, "");
-  }
-  else {
-    var info = "- " + alias + " - (" + stat + ")";
-    createElem("p", info, "", "f_info", friend_td, "");
-  }
-}
-
-function cancelSubmit() {
-  clearDiv('tmp_content');
-}
-
-function loadLogin() {  
-  clearDiv('tmp_content');
-
-  var message = "Password:";
-  createElem("span", message, "", "f_name", "tmp_content", "");
-
-  var pass_html = "<input id=\"data_in_pass\" type=\"password\">";
-  var span_pass = createElem("span", pass_html, "", "","tmp_content", "");
-
-  var in_butt = createElem("button", "Login", "", "", "tmp_content", 
-                           submitLogin);
-  in_butt.setAttribute("type", "text");
-  var in_butt2 = createElem("button", "Cancel", "", "", "tmp_content", 
-                            cancelSubmit);
-  in_butt2.setAttribute("type", "text");
-}
-
-function submitLogin() {
-  var local_user = stateXML.getElementsByTagName('LocalUser')[0]; 
-  var uid = getContent(local_user.getElementsByTagName('Uid')[0]);
-
-  var input_data ="m=jabber.login&uid=" + 
-    encodeURIComponent(uid) +
-    "&pass=" +    
-    encodeURIComponent(document.getElementById('data_in_pass').value);    
-  makeCall(input_data, 2000);
-  clearDiv('tmp_content');
-  setStatus("Logging in");
-}
-
-function addCert() {  
-  clearDiv('tmp_content');
-
-  var message = "Friend ID:";
-  createElem("span", message, "", "f_name", "tmp_content", "");
-  var id = createElem("input", "", "data_in_id", "", "tmp_content","");
-
-  var message = "Friend certificate (base64 string):";
-  createElem("span", message, "", "f_name", "tmp_content", "");
-  var itext = createElem("textarea", "", "data_input", "", "tmp_content","");
-  itext.setAttribute("rows", "5");
-  itext.setAttribute("cols", "50");
-  
-  var in_butt = createElem("button", "Add Friend", "", "", "tmp_content", 
-                           submitCert);
-  in_butt.setAttribute("type", "text");
-  
-  var in_butt2 = createElem("button", "Cancel", "", "", "tmp_content", 
-                            cancelSubmit);
-  in_butt2.setAttribute("type", "text");
-}
-
-function submitCert() {
-  var input_data ="m=add&uid=" + 
-    encodeURIComponent(document.getElementById('data_in_id').value) +
-    "&cert=" +    
-    encodeURIComponent(document.getElementById('data_input').value);    
-  makeCall(input_data, 2000);
-  clearDiv('tmp_content');
+  $("#inputdiv").dialog({ modal : true, title : msg, width : 700,
+    buttons : { "Add Friend" : doAdd, "Cancel" : clearInput}});
 }
 
 function getState() {
-  makeCall('m=getstate', 0);
+  $.ajax({type: "GET", url: "state.xml", success: processState});
 }
 
-function makeLogout() {
-  setStatus("Logging out");
-  makeCall('m=jabber.logout', 1000);
+function doLogin() {
+  var method = "login";
+  var network = "jabber";
+  var user = encodeURIComponent($(":input[name=user]").val());
+  var pass = encodeURIComponent($(":input[name=pass]").val());
+  $.ajax({type: "POST", url: "state.xml", data : "m=" + method + 
+    "&n=" + network + "&u=" + user + "&p=" + pass, 
+    success: processState});
+  clearInput();
 }
 
-function setStatus(message) {
-  var status_elem = document.getElementById('status_id');
-  if (status_elem != null) {
-    status_elem.innerHTML = "... " + message + " ...";
+function doLogout() {
+  var method = "logout";
+  var network = "jabber";
+  $.ajax({type: "POST", url: "state.xml", data : "m=" + method + 
+    "&n=" + network, success: processState});
+
+  clearInput();
+}
+
+function doAdd() {
+  doCall("add",$(":input[name=address]").val());
+  clearInput();
+}
+
+function doBlock() {
+  doCall("block",this.id);
+}
+
+function doUnblock() {
+  clearInput();
+  var user = $("body").data(this.id);
+  var list = $("<ul/>").appendTo("#inputdiv");
+
+  var uid = "Uid : " + user.uid;
+  $("<li/>", { text : uid }).appendTo(list);
+
+  var pcid = "PCID : " + user.pcid;
+  $("<li/>", { text : pcid }).appendTo(list);
+
+  var address = "P2P Address : " + user.address;
+  $("<li/>", { text : address }).appendTo(list);
+
+  var fpr = "Fingerprint : " + user.fpr;
+  $("<li/>", { text : fpr }).appendTo(list);
+
+  var msg = "Confirm your friend's information (for security purposes)";
+  $("#inputdiv").dialog({ modal : true, title : msg, width : 700, 
+    buttons : { "Allow" : function() { doCall("unblock", user.address); 
+    clearInput(); }, "Cancel" : clearInput }});
+}
+
+function doCall(method, address) {
+  $.ajax({type: "POST", url: "state.xml", data : "m=" + method + 
+    "&a=" + address, success: processState});
+}
+
+function processState(state) {
+  var exception = $("string", state).text();
+  var pending = $("Pending", state).text();
+  if(exception != "" && pending == "") {
+    alert(exception);
+    return;
   }
+  prevState = state;
+  processUser(state);
+  loadFriends(state);
 }
 
-function getKey(caller) {
-  var key;  
-  if(caller.key) {
-    key = caller.key;
-  }
-  else if(event !== undefined) {
-    key = event.srcElement.key;
-  }
-  return key;
+function parseUser(user) {
+  user.uid = $("Uid", user).text();
+  user.pcid = $("PCID", user).text();
+  user.img = $("Pic", user).text();
+  user.ip = $("IP", user).text();
+  user.address = $("Address", user).text().substring(12);
+  user.fpr = $("Fingerprint", user).text();
+  user.alias = $("Alias", user).text();
+  user.status = $("Status", user).text();
+  return user;
 }
 
-function blockFriend() {
-  setStatus("blocking friend");
-  var postData = "m=block&uid=" + 
-    encodeURIComponent(getKey(this));
-  makeCall(postData, 1000);
+function parsePending(user) {
+  user.address = $(user).text().substring(12);
+  user.status = "Pending";
+  user.img = "http://www.gravatar.com/avatar/?d=mm";
+  return user;
 }
 
-function unblockFriend() {
-  setStatus("unblocking friend");
-  var postData = "m=unblock&uid=" + 
-    encodeURIComponent(getKey(this));
-  makeCall(postData, 1000);
-}
+function processUser(state) {
+  $("#userdiv").text("");
+  $("<div/>", {'id' : 'userpicdiv'}).appendTo("#userdiv");
+  var user = parseUser($("LocalUser", state));
 
-function makeCall(postData, ref_time) {
-  refresh_time = ref_time;
-  var httpRequest;
-  if(window.XMLHttpRequest) {
-    httpRequest = new XMLHttpRequest();
-    //httpRequest.overrideMimeType('text/xml');
-  }
-  else if(window.ActiveXObject) {
-    httpRequest = new ActiveXObject("Microsoft.XMLHTTP");
+  var txt = "http://gravatar.com";
+  var link = $("<a/>", {'href' : txt, 'target' : '_blank'}).appendTo("#userpicdiv");
+
+  $("<img/>", {'src' : user.img, 'width' : '60px', 
+    'height' : '60px'}).appendTo(link);
+
+  $("<div/>", {'id' : 'usersubdiv'}).appendTo("#userdiv");
+
+  var info = " (" + user.pcid + " - " + user.ip + ")";
+  var h2 = $("<h2/>", {text : user.uid}).appendTo("#usersubdiv");
+  $("<span/>", {text : info}).appendTo(h2);
+
+  var info = "P2P Address: " + user.address;
+  $("<span/>", {text : info, 'class' : 'address'}).appendTo("#usersubdiv");
+
+  $("<br/>").appendTo("#usersubdiv");
+
+  var stat = $("Message", prevState).text();
+  var msg = "XMPP Status: " + stat;
+  $("<p/>", {text : msg}).appendTo("#usersubdiv");
+
+  if(stat.match("Online") != null) {
+    $("#login").text("Logout");
   }
   else {
-    alert("No XMLHTTP support, try another browser");
+    $("#login").text("Login");
   }
-  
-  httpRequest.onreadystatechange = function() { 
-    if(httpRequest.readyState == 4) {
-      stateXML = httpRequest.responseXML;
-      if(refresh_time != 0) {
-        window.setTimeout(getState, refresh_time);
-      }
-      else {
-        loadUser();
-        loadHeader();
-        loadFriends();
-      }
-    }
-  };  
-  httpRequest.open('POST', 'state.xml', true);
-  httpRequest.setRequestHeader("Content-type", 
-                               "application/x-www-form-urlencoded");
-  httpRequest.setRequestHeader("Content-length", postData.length);
-  httpRequest.setRequestHeader("Connection", "close");
-  httpRequest.send(postData);
 }
 
+function loadFriends(state) {
+  $("#friendsdiv").text("");
+  $("<table/>").appendTo("#friendsdiv");
+  $("SocialUser",state).each(function() { addOnline(parseUser(this)); });
+  $("SocialUser",state).each(function() { addOffline(parseUser(this)); });
+  $("SocialUser",state).each(function() { addBlocked(parseUser(this)); });
+  $("string",state).each(function() {
+    addFriend(parsePending(this)); });
+}
+
+function addOnline(user) {
+  if(user.status == "Online") {
+    addFriend(user);
+  }
+}
+
+function addOffline(user) {
+  if(user.status == "Offline") {
+    addFriend(user);
+  }
+}
+
+function addBlocked(user) {
+  if(user.status == "Blocked") {
+    addFriend(user);
+  }
+}
+
+function checkFlags(user) {
+  var id = "#" + user.status;
+  return $(id).attr("checked");
+}
+
+function addFriend(user) {
+  if(!checkFlags(user)) return;
+
+  var row = $("<tr/>").appendTo("#friendsdiv table");
+
+  var imgcol = $("<td/>");
+  imgcol.appendTo(row);
+
+  var txt = "http://gravatar.com";
+  var link = $("<a/>", {'href' : txt, 'target' : '_blank'});
+
+  $("<img/>",{'src' : user.img, 'width' : '30px', 
+    'height' : '30px'}).appendTo(link);
+
+  imgcol.append(link);
+
+  var infocol = $("<td/>", {'width' : '100%'});
+  infocol.appendTo(row);
+
+  var info = user.uid + " (" + user.pcid + " - " + user.ip + ")";
+  var address = "P2P Address : " + user.address + " : " + user.status;
+
+  var name = "name";
+  if (user.status == "Offline") {
+    name = "name_b";
+  }
+  else if (user.status == "Blocked") {
+    name = "name_c";
+  }
+  else if (user.status == "Pending") {
+    name = "name_b";
+  }
+
+  infocol.append($("<p/>",{text: info, 'class': name}));
+  infocol.append($("<p/>",{text: address, 'class': 'info'}));
+
+  var optcol = $("<td/>");
+  optcol.appendTo(row);
+
+  if (user.status != "Blocked") {
+    optcol.append($("<p/>",{text: 'Block', 'class': 'opts', 
+      'id' : user.address, click : doBlock}));
+  }
+  else {
+    optcol.append($("<p/>",{text: 'Allow', 'class': 'opts',
+      'id' : user.address, click : doUnblock}));
+  }
+
+  $("body").data(user.address, user);
+}

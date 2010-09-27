@@ -20,276 +20,210 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 */
 
-var stateXML = "";
-var pageID = "search";
-var refresh_time = 0;
-var query = null;
+var prevState = "";
+var gquery = "";
+var del = "";
 
-init();
+$(document).ready(init);
 
 function init() {
+  document.title = "SocialDNS";
   loadPage();
   loadHeader();
-}
-
-function createElem(itemType, itemHTML, itemID, itemClass, containerName, 
-                    functionName) {
-  var elem = document.createElement(itemType);
-  elem.id = itemID;
-  elem.className = itemClass;
-  if(functionName != "") {
-    if(elem.addEventListener) {
-      elem.addEventListener("click", functionName, false);
-    }
-    else if(elem.attachEvent) {
-      elem.attachEvent("onclick", functionName);
-    }
-  }
-  try {
-    elem.innerHTML = itemHTML;
-  } catch (err) {}
-  if(typeof containerName == 'string') {
-    var container = document.getElementById(containerName); 
-    container.appendChild(elem);
-  }
-  else {
-    containerName.appendChild(elem);
-  }
-  return elem;
-}
-
-function getContent(xmlElem) {
-  var content = "";
-  if(xmlElem.textContent) {
-    content = xmlElem.textContent;
-  }
-  else if(xmlElem.text) {
-    content = xmlElem.text;
-  }
-  return content;
-}
-
-function clearDiv(name) {
-  var div_main_content = document.getElementById(name);
-  div_main_content.innerHTML = "";
-}
-
-function createTable(title) {
-  createElem("table", "", "data_table", "", "main_content", "");
-  createElem("tr", "", "table_tr", "", "data_table", "");
-  createElem("td",title, "", "", "table_tr", "");
-  createElem("td","", "", "", "table_tr", "");
-}
-
-function createTable2(title) {
-  createElem("table", "", "data_table2", "", "side_content", "");
-  createElem("tr", "", "table_tr2", "", "data_table2", "");
-  createElem("td", title, "", "", "table_tr2", "");
+  loadSearch();
+  getState();
+  window.setInterval(getState, 15000);
 }
 
 function loadPage() {
-  document.title = "SocialDNS"; 
-  var headElement = document.getElementsByTagName('head')[0];
-  var styleSheet = document.createElement('link');
-  styleSheet.setAttribute('rel', 'stylesheet');
-  styleSheet.setAttribute('type', 'text/css');
-  styleSheet.setAttribute('href', 'socialdns.css');
-  headElement.appendChild(styleSheet);
-  
-  document.body = document.createElement('body');
-  var div_wrapper = document.createElement('div');
-  div_wrapper.id = "wrapper";
-  document.body.appendChild(div_wrapper);
-  
-  createElem("div", "","header","", "wrapper", "");
-  createElem("div", "", "subheader","", "header", "");
-  createElem("div", "", "main_body", "", "wrapper", "");
-  createElem("div", "", "local_nav", "", "main_body", "");
-  createElem("div", "", "tmp_content", "", "main_body", "");
-  createElem("div", "", "side_content", "", "main_body", "");
-  createElem("div", "", "main_content", "", "main_body", "");
+  $("<div/>", {'id' : 'wrapper'}).appendTo("body");
+  $("<div/>", {'id' : 'header'}).appendTo("#wrapper");
+  $("<div/>", {'id' : 'subheader'}).appendTo("#header");
+  $("<div/>", {'id' : 'maindiv'}).appendTo("#wrapper");
+  $("<div/>", {'id' : 'searchdiv'}).appendTo("#maindiv");
+  $("<div/>", {'id' : 'inputdiv'}).appendTo("#maindiv");
+  $("<div/>", {'id' : 'sidediv'}).appendTo("#maindiv");
+  $("<div/>", {'id' : 'resultsdiv'}).appendTo("#maindiv");
 }
 
 function loadHeader() {
-  var main_title = document.createElement('span');
-  main_title.className = "svpn";
-  main_title.innerHTML = "SocialDNS Web Management Interface";
-
-  var menu = document.createElement('ul');
-  menu.id = "header_menu";
-
-  var div_subheader = document.getElementById('subheader');
-  div_subheader.appendChild(main_title);
-  div_subheader.appendChild(menu);
-
-  loadSearch();
-  getState();
+  $("<h1/>", {text : 'SocialDNS'}).appendTo("#subheader");
+  var menu = $("<ul/>").appendTo("#subheader");
+  menu.append($("<li/>", {text : 'Add Mapping', click : loadAdd}));
 }
 
-function loadMappings() {
-  pageID = "search";
-  
-  clearDiv('local_nav');
-  clearDiv('main_content');
-  clearDiv('side_content');
-  showMappings();
+function loadSearch() {
+  $("<input/>", {"name" : "search"}).appendTo("#searchdiv");
+
+  var msg = "Search";
+  $("<button/>", {text : msg, click : doSearch}).appendTo("#searchdiv");
+
 }
 
-function showMappings() {
-  clearDiv("main_content");
-  createTable("Search Results (Click on mapping to add to your DNS cache)");
-  createTable2("Local Mappings");
+function parseResult(result) {
+  result.alias = $("Alias", result).text();
+  result.ip = $("IP", result).text();
+  result.address = $("Address", result).text();
+  result.source = $("Source", result).text();
+  result.rating = $("Rating", result).text();
+  result.responders = new Array();
+  $("string", result).each ( function() {
+    result.responders.push($(this).text());})
+  return result;
+}
 
-  var mappinglist = stateXML.getElementsByTagName('Mappings')[0];
-  var mappings = mappinglist.getElementsByTagName('DnsMapping');
-  var tmappinglist = stateXML.getElementsByTagName('TmpMappings')[0];
-  var tmappings = tmappinglist.getElementsByTagName('DnsMapping');
-  
-  for (var i = 0; i < tmappings.length; i++) {
-    addMapping(tmappings[i]);
+function loadResults(state) {
+  $("#resultsdiv").text("");
+  $("#sidediv").text("");
+  createSideTable();
+  createTable();
+
+  $("Mappings > DnsMapping", state).each( function() { 
+    addSideResult(parseResult(this));});
+
+  $("TmpMappings > DnsMapping", state).each( function() { 
+    addResult(parseResult(this));});
+}
+
+function createSideTable() {
+  var table = $("<table/>").appendTo("#sidediv");
+  var row = $("<tr/>").appendTo(table);
+
+  var title = "Local Mappings (Click to delete)";
+  var infocol = $("<td/>", { text: title, 'class' : 'table_title'});
+  infocol.appendTo(row);
+}
+
+function createTable() {
+  var table = $("<table/>").appendTo("#resultsdiv");
+  var row = $("<tr/>").appendTo(table);
+
+  var title = "Search Results (Click on mapping to add to your DNS cache)";
+  var infocol = $("<td/>", { text: title, 'width' : '100%', 
+    'class' : 'table_title'});
+  var ratingcol = $("<td/>");
+  infocol.appendTo(row);
+  ratingcol.appendTo(row);
+}
+
+function addResult(result) {
+  var row = $("<tr/>").appendTo("#resultsdiv table");
+  var infocol = $("<td/>", { 'width': '100%'});
+  var ratingcol = $("<td/>");
+  infocol.appendTo(row);
+  ratingcol.appendTo(row);
+
+  var info = result.alias + " - " + result.ip;
+  infocol.append($("<p/>", {text: info, 'class' : 'name',
+    'id' : info, click : doClickAdd}));
+
+  var sinfo = "Responders: ";
+  for(var i in result.responders) {
+    sinfo += result.responders[i] + ", ";
   }
-  for (var i = 0; i < mappings.length; i++) {
-    addMapping2(mappings[i]);
-  }
+  infocol.append($("<p/>", { text: sinfo, 'class' : 'info'}));
 
-  if (tmappings.length == 0) {
-    showNoResults();
-  }
+  ratingcol.append($("<span/>", {text: result.rating,'class': 'rating'}));
+
+  $("body").data(info, result);
 }
 
-function addMapping(mapping) {
-  var dtTable = document.getElementById('data_table');
-  var new_tr = document.createElement('tr');
-  var new_td = document.createElement('td');
-  var new_td2 = document.createElement('td');
-  
-  dtTable.appendChild(new_tr);
-  new_tr.appendChild(new_td);  
-  new_tr.appendChild(new_td2);  
+function addSideResult(result) {
+  var row = $("<tr/>").appendTo("#sidediv table");
+  var info = result.alias + "  -  " + result.ip;
+  var infocol = $("<td/>", {text: info, 'style' : 'cursor:pointer',
+  'id' : info, click : loadDelete});
+  infocol.appendTo(row);
 
-  var alias = getContent(mapping.getElementsByTagName('Alias')[0]);
-  var ip = getContent(mapping.getElementsByTagName('IP')[0]);
-  var address = getContent(mapping.getElementsByTagName('Address')[0]);
-  var source = getContent(mapping.getElementsByTagName('Source')[0]);
-  var rating = getContent(mapping.getElementsByTagName('Rating')[0]);
-
-  var innerHTML = alias + " - " + ip;
-  var info_item = createElem("p", innerHTML, "", "f_name", new_td,
-    addOnClick);
-  info_item.key = alias + "=" + address + "=" + source + "=" + ip;
-
-  var innerHTML = "Created by " + source;
-  var info_item = createElem("p", innerHTML, "", "f_info", new_td, "");
-  var rating_item = createElem("span", rating, "", "f_rating", new_td2, "");
+  $("body").data(info, result);
 }
 
-function addMapping2(mapping) {
-  var dtTable = document.getElementById('data_table2');
-  var new_tr = document.createElement('tr');
-  var new_td = document.createElement('td');
-  
-  dtTable.appendChild(new_tr);
-  new_tr.appendChild(new_td);  
-
-  var innerHTML = getContent(mapping.getElementsByTagName('Alias')[0]);
-  var info_item = createElem("span", innerHTML, "", "f_name2", new_td, "");
+function clearInput() {
+  $("#inputdiv").dialog("close");
+  $("#inputdiv").text("");
 }
 
-function showNoResults() {
-  var dtTable = document.getElementById('data_table');
-  var new_tr = document.createElement('tr');
-  var new_td = document.createElement('td');
-  var new_td2 = document.createElement('td');
-  
-  dtTable.appendChild(new_tr);
-  new_tr.appendChild(new_td);  
-  new_tr.appendChild(new_td2);  
+function loadAdd() {
+  clearInput();
+  var msg;
 
-  var innerHTML = "<b>No results available.<b>"
-  var info_item = createElem("p", innerHTML, "", "", new_td, "");
+  $("<label/>", { text : "Enter DNS Name"}).appendTo("#inputdiv");
+  $("<input/>", { 'type' : "text", 'class' : "input",
+    'name' : "dnsname"}).appendTo("#inputdiv");
+  $("<label/>", { text : "Enter IP Address"}).appendTo("#inputdiv");
+  $("<input/>", { "type" : "text", 'class' : "input",
+    'name' : "dnsip"}).appendTo("#inputdiv");
+
+  msg = "Create a new DNS mapping";
+  $("#inputdiv").dialog({ modal : true, title : msg, width : 700,
+    buttons : { "Add Mapping" : doAdd, "Cancel" : clearInput}});
 }
 
-function loadSearch() {  
-  var div_tmp_content = document.getElementById('tmp_content');
-  div_tmp_content.innerHTML = "";
-  
-  var id = createElem("input", "", "data_in_id", "", "tmp_content","");
+function loadDelete() {
+  clearInput();
 
-  div_tmp_content.appendChild(document.createElement('br'));
+  var result = $("body").data(this.id);
+  del = result.alias;
 
-  var in_butt = createElem("button", "Search your friends' cache", "", 
-    "", "tmp_content", submitSearch);
-  in_butt.setAttribute("type", "text");
+  var msg = "Are you sure you want to delete " + result.alias + " ?";
+  $("<p/>", { text : msg}).appendTo("#inputdiv");
 
-  var in_butt2 = createElem("button", "Add mapping to your cache", "", 
-    "", "tmp_content", addOnInput);
-  in_butt2.setAttribute("type", "text");
-}
-
-function submitSearch() {
-  query = encodeURIComponent(document.getElementById('data_in_id').value);
-  var input_data ="m=sdns.lookup&query=" + query;
-  makeCall(input_data, 5000);
-}
-
-function addOnInput() {
-  var input_data ="m=sdns.addmapping&mapping=" + 
-    encodeURIComponent(document.getElementById('data_in_id').value);
-  makeCall(input_data, 1000);
-}
-
-function addOnClick() {
-  var postData = "m=sdns.addmapping&mapping=" +
-    encodeURIComponent(getKey(this));
-  makeCall(postData, 1000);
+  msg = "Delete for " + result.alias;
+  $("#inputdiv").dialog({ modal : true, title : msg, width : 700,
+    buttons : { "Delete" : doDelete, "Cancel" : clearInput}});
 }
 
 function getState() {
-  if(query != null) {
-    makeCall("m=sdns.lookup&query=" + query, 5000);
-  }
-  else {
-    makeCall('m=sdns.getstate', 5000);
-  }
+  var method = "sdns.search";
+  $.ajax({type: "POST", url: "state.xml", data : "m=" + method +
+    "&q=" + gquery, success: processState});
 }
 
-function getKey(caller) {
-  if(caller.key) {
-    return caller.key;
-  }
-  else if(event !== undefined) {
-    return event.srcElement.key;
-  }
+function doClickAdd() {
+  var result = $("body").data(this.id);
+  var method = "sdns.add";
+  var name = result.alias;
+  var ip = result.ip;
+  $.ajax({type: "POST", url: "state.xml", data : "m=" + method + 
+    "&n=" + name + "&i=" + ip + "&q=" + gquery, 
+    success: processState});
 }
 
-function makeCall(postData, ref_time) {
-  refresh_time = ref_time;
-  var httpRequest;
-  if(window.XMLHttpRequest) {
-    httpRequest = new XMLHttpRequest();
-    //httpRequest.overrideMimeType('text/xml');
-  }
-  else if(window.ActiveXObject) {
-    httpRequest = new ActiveXObject("Microsoft.XMLHTTP");
-  }
-  else {
-    alert("No XMLHTTP support, try another browser");
-  }
-  
-  httpRequest.onreadystatechange = function() { 
-    if(httpRequest.readyState == 4) {
-      stateXML = httpRequest.responseXML;
-      if(refresh_time != 0) {
-        window.setTimeout(getState, refresh_time);
-      }
-      loadMappings();
-    }
-  };  
-  httpRequest.open('POST', 'state.xml', true);
-  httpRequest.setRequestHeader("Content-type", 
-                               "application/x-www-form-urlencoded");
-  httpRequest.setRequestHeader("Content-length", postData.length);
-  httpRequest.setRequestHeader("Connection", "close");
-  httpRequest.send(postData);
+function doDelete() {
+  var method = "sdns.del";
+  var name = del;
+  $.ajax({type: "POST", url: "state.xml", data : "m=" + method + 
+    "&n=" + name + "&q=" + gquery, 
+    success: processState});
+  clearInput();
 }
 
+function doAdd() {
+  var method = "sdns.add";
+  var name = encodeURIComponent($(":input[name=dnsname]").val());
+  var ip = encodeURIComponent($(":input[name=dnsip]").val());
+  $.ajax({type: "POST", url: "state.xml", data : "m=" + method + 
+    "&n=" + name + "&i=" + ip + "&q=" + gquery, 
+    success: processState});
+  clearInput();
+}
+
+function doSearch() {
+  var method = "sdns.search";
+  var query = encodeURIComponent($(":input[name=search]").val());
+  gquery = query;
+  $.ajax({type: "POST", url: "state.xml", data : "m=" + method + 
+    "&q=" + query, success: processState});
+  clearInput();
+}
+
+function processState(state) {
+  var exception = $("string", state).text();
+  var responders = $("Responders", state).text();
+  if(exception != "" && responders == "") {
+    alert(exception);
+    return;
+  }
+
+  loadResults(state);
+}

@@ -21,12 +21,16 @@ THE SOFTWARE.
 */
 
 using System;
+using System.Collections;
 using System.Collections.Generic;
 
 using Brunet;
 using Brunet.Security;
 using Brunet.Applications;
-using Brunet.Concurrent;
+using Brunet.Collections;
+using Brunet.Symphony;
+using Brunet.Security.PeerSec.Symphony;
+
 using Ipop;
 using Ipop.Managed;
 
@@ -36,285 +40,111 @@ using NUnit.Framework;
 
 namespace Ipop.SocialVPN {
 
-  public enum AccessTypes {
-    Allow,
-    Block
-  }
-
   public class SocialNode : ManagedIpopNode {
 
-    public sealed class SocialState {
+    public const string DNSSUFFIX = "sdns";
 
-      public SocialUser LocalUser;
+    protected ImmutableDictionary<string, SocialUser> _friends;
 
-      public SocialUser[] Friends;
-
-      public string[] BlockedFriends;
-    }
-
-    public const string DNSSUFFIX = "ipop";
-
-    public const string STATEPATH = "state.xml";
-
-    protected readonly Dictionary<string, SocialUser> _friends;
-
-    protected readonly List<string> _bfriends;
+    protected ImmutableDictionary<string, string> _aliases;
 
     protected readonly SocialUser _local_user;
 
-    protected readonly SecurityOverlord _bso;
-
-    protected readonly object _sync;
-
-    private WriteOnce<bool> _global_block;
-
-    private string _status;
+    public StructuredNode Node {
+      get { return AppNode.Node; }
+    }
 
     public SocialUser LocalUser {
       get { return _local_user; }
     }
 
-    public Node RpcNode {
-      get { return AppNode.Node; }
+    public IDictionary<string, SocialUser> Friends {
+      get { return _friends; }
+    }
+
+    public SymphonySecurityOverlord Bso {
+      get { return AppNode.SymphonySecurityOverlord; }
     }
 
     public SocialNode(NodeConfig brunetConfig, IpopConfig ipopConfig,
                       string certificate) : base(brunetConfig, ipopConfig) {
-      _friends = new Dictionary<string, SocialUser>();
-      _bfriends = new List<string>();
-      _sync = new object();
-      _status = StatusTypes.Offline.ToString();
-      _global_block = new WriteOnce<bool>();
-      _local_user = new SocialUser();
-      _local_user.Certificate = certificate;
+
+      _friends = ImmutableDictionary<string, SocialUser>.Empty;
+      _aliases = ImmutableDictionary<string, string>.Empty;
+      _local_user = new SocialUser(certificate);
       _local_user.IP = _marad.LocalIP;
       _marad.AddDnsMapping(_local_user.Alias, _local_user.IP, true);
-      _bso = AppNode.SecurityOverlord;
-      _bso.CertificateHandler.AddCACertificate(_local_user.GetCert().X509);
-      _bso.CertificateHandler.AddSignedCertificate(_local_user.GetCert().X509);
+
+      Bso.CertificateHandler.AddCACertificate(_local_user.GetCert().X509);
+      Bso.CertificateHandler.AddSignedCertificate(_local_user.GetCert().X509);
     }
 
-    protected SocialUser AddFriend(string certb64, string uid, string ip) {
-      bool new_friend = IsNewFriend(uid);
-      SocialUser user = new SocialUser();
-      user.Certificate = certb64;
-      user.Status = StatusTypes.Offline.ToString();
-      user.Time = String.Empty;
-
-      if (user.Uid.ToLower() != uid.ToLower()) {
-        throw new Exception("Uids do not match");
+    private bool Verify(SocialUser user) {
+      if(_friends.ContainsKey(user.Address)) {
+        throw new Exception("Verify failure, address already exists");
       }
 
-      foreach (SocialUser tmp_user in GetFriends()) {
-        if (tmp_user.Address == user.Address) {
-          throw new Exception("Address already exists");
-        }
+      if(_aliases.ContainsKey(user.Alias)) {
+        RemoveFriend(_aliases[user.Alias]);
       }
 
-      if (_friends.ContainsKey(user.Alias)) {
-        RemoveFriend(user.Alias);
-      }
+      return true;
+    }
+
+    public SocialUser AddFriend(string cert, string uid, string ip) {
+      SocialUser user = new SocialUser(cert);
+
+      Verify(user);
 
       Address addr = AddressParser.Parse(user.Address);
-      _bso.CertificateHandler.AddCACertificate(user.GetCert().X509);
-      AppNode.Node.ManagedCO.AddAddress(addr);
+      Bso.CertificateHandler.AddCACertificate(user.GetCert().X509);
+      Node.ManagedCO.AddAddress(addr);
       user.IP = _marad.AddIPMapping(ip, addr);
       _marad.AddDnsMapping(user.Alias, user.IP, true);
-      user.Access = AccessTypes.Allow.ToString();
 
-      lock (_sync) {
-        _friends.Add(user.Alias, user);
-      }
-      // Check global block option and block if necessary
-      if((new_friend && _global_block.Value) || _bfriends.Contains(uid)) {
-        Block(uid);
-      }
-      GetState(true);
+      _friends = _friends.InsertIntoNew(user.Address, user);
+      _aliases = _aliases.InsertIntoNew(user.Alias, user.Address);
+
       return user;
     }
 
-    protected void RemoveFriend(string alias) {
-      if (!_friends.ContainsKey(alias)) {
-        throw new Exception("Alias not found");
-      }
+    public void RemoveFriend(string address) {
+      SocialUser user = _friends[address];
+      Address addr = AddressParser.Parse(user.Address);
+      Node.ManagedCO.RemoveAddress(addr);
+      _marad.RemoveIPMapping(user.IP);
+      _marad.RemoveDnsMapping(user.Alias, true);
 
-      SocialUser user = _friends[alias];
-      Address addr = AddressParser.Parse(user.Address);
-      AppNode.Node.ManagedCO.RemoveAddress(addr);
+      ImmutableDictionary<string, SocialUser> old;
+      _friends = _friends.RemoveFromNew(address, out old);
+      ImmutableDictionary<string, string> old2;
+      _aliases = _aliases.RemoveFromNew(user.Alias, out old2);
+    }
+
+    public void Block(string address) {
+      SocialUser user = _friends[address];
       _marad.RemoveIPMapping(user.IP);
-      _marad.RemoveDnsMapping(user.Alias, true);
-
-      lock (_sync) {
-        _friends.Remove(user.Alias);
-      }
-      GetState(true);
     }
 
-    protected void Block(string uid) {
-      foreach(SocialUser user in GetFriends()) {
-        if(user.Uid == uid && user.Access != AccessTypes.Block.ToString()) {
-          try{
-            _marad.RemoveIPMapping(user.IP);
-            string access = AccessTypes.Block.ToString();
-            UpdateFriend(user.Alias, user.IP, user.Time, access, user.Status);
-          }
-          catch(Exception e) {
-            Console.WriteLine(e);
-          }
-        }
-      }
-
-      lock (_sync) {
-        if(!_bfriends.Contains(uid)) {
-          _bfriends.Add(uid);
-        }
-      }
-      GetState(true);
+    public void Unblock(string address) {
+      SocialUser user = _friends[address];
+      _marad.AddIPMapping(user.IP, AddressParser.Parse(address));
     }
 
-    protected void Unblock(string uid) {
-      foreach(SocialUser user in GetFriends()) {
-        if(user.Uid == uid && user.Access == AccessTypes.Block.ToString()) {
-          try{
-            Address addr = AddressParser.Parse(user.Address);
-            _marad.AddIPMapping(user.IP, addr);
-            string access = AccessTypes.Allow.ToString();
-            UpdateFriend(user.Alias, user.IP, user.Time, access, user.Status);
-          }
-          catch(Exception e) {
-            Console.WriteLine(e);
-          }
-        }
-      }
-
-      lock (_sync) {
-        _bfriends.Remove(uid);
-      }
-      GetState(true);
-    }
-
-    protected bool IsNewFriend(string uid) {
-      foreach(SocialUser user in GetFriends()) {
-        if(user.Uid == uid) {
-          return true;
-        }
-      }
-      return false;
-    }
-
-    protected string GetState(bool write_to_file) {
-      SocialState state = new SocialState();
-      state.LocalUser = _local_user.ChangedCopy(_local_user.IP, 
-        String.Empty, String.Empty, _status);
-      state.Friends = new SocialUser[_friends.Count];
-      state.BlockedFriends = new string[_bfriends.Count];
-      _friends.Values.CopyTo(state.Friends, 0);
-      _bfriends.CopyTo(state.BlockedFriends, 0);
-      if(write_to_file) {
-        Utils.WriteConfig(STATEPATH, state);
-      }
-      return SocialUtils.ObjectToXml<SocialState>(state);
-    }
-
-    protected void SetGlobalBlock(bool global_block) {
-      _global_block.Value = global_block;
-    }
-
-    protected void LoadState() {
-      try {
-        SocialState state = Utils.ReadConfig<SocialState>(STATEPATH);
-        foreach (string user in state.BlockedFriends) {
-          lock (_sync) {
-            _bfriends.Add(user);
-          }
-        }
-        foreach (SocialUser user in state.Friends) {
-          AddFriend(user.Certificate, user.Uid, user.IP);
-        }
-      }
-      catch (Exception e) {
-        Console.WriteLine(e);
-      }
-    }
-
-    public SocialUser[] GetFriends() {
-      SocialUser[] friends;
-      lock(_sync) {
-        friends = new SocialUser[_friends.Count];
-        int i = 0;
-        foreach(SocialUser user in _friends.Values) {
-          friends[i] = user.ExactCopy();
-          i++;
-        }
-      }
-      return friends;
-    }
-
-    public void UpdateStatus(StatusTypes status) {
-      _status = status.ToString();
-    }
-
-    public void UpdateFriend(string alias, string ip, string time, 
-      string access, string status) {
-      SocialUser user;
-      if(_friends.TryGetValue(alias, out user)) {
-        SocialUser new_user = user.ChangedCopy(ip, time, access, status);
-        lock(_sync) {
-          _friends.Remove(new_user.Alias);
-          _friends.Add(new_user.Alias, new_user);
-        }
-      }
-      else {
-        throw new Exception("Could not get value to update");
-      }
-    }
-
-    public void AddCertificate(string b64_cert, string uid) {
-      AddFriend(b64_cert, uid, null);
-    }
     public void AddDnsMapping(string alias, string ip) {
-      _marad.AddDnsMapping(alias, ip, false);
-    }
+      _marad.AddDnsMapping(alias, ip, false);
+    }
 
-    public void RemoveDnsMapping(string alias) {
-      _marad.RemoveDnsMapping(alias, false);
-    }
+    public void RemoveDnsMapping(string alias) {
+      _marad.RemoveDnsMapping(alias, false);
+    }
 
-    public void ProcessHandler(Object obj, EventArgs eargs) {
-      Dictionary <string, string> request = (Dictionary<string, string>)obj;
-      string method = String.Empty;
-      request.TryGetValue("m", out method);
-
-      switch(method) {
-        case "add":
-          AddFriend(request["cert"], request["uid"], null);
-          break;
-
-        case "addip":
-          AddFriend(request["cert"], request["uid"], request["ip"]);
-          break;
-
-        case "remove":
-          RemoveFriend(request["alias"]);
-          break;
-
-        case "block":
-          Block(request["uid"]);
-          break;
-
-        case "unblock":
-          Unblock(request["uid"]);
-          break;
-
-        default:
-          break;
-      }
-      if (!request.ContainsKey("response")) {
-        request["response"] = GetState(false);
-      }
+    public bool IsAllowed(string address) {
+      return _marad.mcast_addr.Contains(AddressParser.Parse(address));
     }
 
     public static new SocialNode CreateNode() {
+
       SocialConfig social_config;
       NodeConfig node_config;
       IpopConfig ipop_config;
@@ -326,26 +156,28 @@ namespace Ipop.SocialVPN {
       ipop_config = Utils.ReadConfig<IpopConfig>(social_config.IpopConfig);
 
       SocialNode node = new SocialNode(node_config, ipop_config, certb64);
-      HttpInterface http_ui = new HttpInterface(social_config.HttpPort);
-      SocialDnsManager dns_manager = new SocialDnsManager(node);
-      JabberNetwork jabber = new JabberNetwork(social_config.JabberHost,
-                                               social_config.JabberPort,
-                                               social_config.AutoFriend,
-                                               node);
+#if !SVPN_NUNIT
+      SocialDnsManager sdm = new SocialDnsManager(node);
 
-      http_ui.ProcessEvent += node.ProcessHandler;
-      http_ui.ProcessEvent += jabber.ProcessHandler;
-      http_ui.ProcessEvent += dns_manager.ProcessHandler;
+      SocialConnectionManager manager = new SocialConnectionManager(node,
+        node.AppNode.Node.Rpc, sdm);
 
-      node.Shutdown.OnExit += http_ui.Stop;
+      JabberNetwork jabber = new JabberNetwork(social_config.JabberID, 
+        social_config.JabberPass, social_config.JabberHost, 
+        social_config.JabberPort, node.LocalUser.Fingerprint,
+        node.LocalUser.Address);
+
+      manager.Register("jabber", jabber);
+
+      HttpInterface http = new HttpInterface(social_config.HttpPort);
+      http.ProcessEvent += manager.ProcessHandler;
+
+      node._marad.Resolver = sdm;
       node.Shutdown.OnExit += jabber.Logout;
+      node.Shutdown.OnExit += http.Stop;
+      http.Start();
+#endif
 
-      node.SetGlobalBlock(social_config.GlobalBlock);
-      node.LoadState();
-      if (social_config.AutoLogin) {
-        jabber.Login(social_config.JabberID, social_config.JabberPass);
-      }
-      http_ui.Start();
       return node;
     }
 
@@ -361,8 +193,7 @@ namespace Ipop.SocialVPN {
   public class SocialNodeTester {
     [Test]
     public void SocialNodeTest() {
-      Certificate cert = SocialUtils.CreateCertificate("alice@facebook.com",
-        "Alice Wonderland", "pc", "version", "country", "address123", null);
+      Assert.AreEqual(1,1);
     }
   }
 #endif

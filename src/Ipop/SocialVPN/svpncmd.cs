@@ -54,15 +54,27 @@ namespace Ipop.SocialVPN {
       social_config.JabberID = uid;
       social_config.JabberPass = "password";
       social_config.AutoLogin = false;
-      social_config.GlobalBlock = false;
+      social_config.GlobalBlock = true;
       social_config.AutoFriend = false;
+      social_config.AutoDns = true;
       Utils.WriteConfig("social.config", social_config);
     }
 
-    public static void CreateCertificate(string uid, string pcid, string name) {
+    public static void CreateCertificate(string uid) {
+      string pcid = System.Net.Dns.GetHostName();
+      string name = uid;
+      CreateCertificate(uid, pcid, name);
+    }
+
+    public static void CreateCertificate(string uid, string pcid, 
+      string name) {
       CreateConfig(uid);
       string config_path = "brunet.config";
       NodeConfig node_config = Utils.ReadConfig<NodeConfig>(config_path);
+      node_config.XmppServices.Enabled = false;
+      node_config.XmppServices.Username = uid;
+      node_config.XmppServices.Password = "password";
+      node_config.XmppServices.Port = 5222;
       string version = "0.4";
       string country = "country";
 
@@ -177,7 +189,7 @@ namespace Ipop.SocialVPN {
           break;
 
         case "cert":
-          CreateCertificate(args[1], args[2], args[1]);
+          CreateCertificate(args[1]);
           break;
 
         case "login":

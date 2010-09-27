@@ -7,6 +7,7 @@ device=tapipop
 platform=linux
 mac_path=/dev/tap0
 pid_file=/var/run/dhclient.$device.pid
+user=$(ls -l SocialVPN.exe | awk '{ print $3 }')
 
 if [[ -e $mac_path ]]; then
   platform=mac
@@ -17,20 +18,20 @@ if [[ $root != root ]]; then
   exit 1
 fi
 
-if [[ -f $key ]]; then
-  user=$(ls -l private_key | awk '{ print $3 }')
-  if [[ $platform == linux ]]; then
-    /usr/sbin/tunctl -d $device
-    /usr/sbin/tunctl -u $user -t $device
-    chmod 666 /dev/net/tun
-  elif [[ $platform == mac ]]; then
-    chmod 666 /dev/tap0
-  fi
-  su $user -c "mono SocialVPN.exe &> log.txt &"
-else
-  echo "Run ./setup as non-root"
-  exit 1
+if [[ ! -f $key ]]; then
+  echo -n "Enter a userid: "
+  read uid
+  su $user -c "/usr/bin/mono svpncmd.exe cert $uid"
 fi
+
+if [[ $platform == linux ]]; then
+  /usr/sbin/tunctl -d $device
+  /usr/sbin/tunctl -u $user -t $device
+  chmod 666 /dev/net/tun
+elif [[ $platform == mac ]]; then
+  chmod 666 /dev/tap0
+fi
+su $user -c "/usr/bin/mono SocialVPN.exe &> log.txt &"
 
 sleep 3
 
