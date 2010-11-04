@@ -36,6 +36,8 @@ namespace Ipop.SocialVPN {
 
     IDictionary<string, string> Fingerprints { get; }
 
+    void SetData(string address, string fingerprint);
+
     void Login(string uid, string password);
 
     void Logout();

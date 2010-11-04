@@ -56,6 +56,24 @@ namespace Ipop.SocialVPN {
       public string Message;
     }
 
+    public class FriendState {
+
+      public string Certificate;
+
+      public string IP;
+
+      public string Status;
+    }
+
+    public class FileState {
+
+      public string Uid;
+
+      public string PCID;
+
+      public FriendState[] Friends;
+    }
+
     public class SocialState {
 
       public SocialUser LocalUser;
@@ -64,7 +82,7 @@ namespace Ipop.SocialVPN {
 
       public NetworkState[] Networks;
 
-      public List<string> Pending;
+      public string[] Pending;
     }
 
     public enum StatusTypes {
@@ -73,6 +91,8 @@ namespace Ipop.SocialVPN {
       Blocked,
       Pending
     }
+
+    public const char DELIM = ' ';
  
     public const string STATEPATH = "state.xml";
 
@@ -82,11 +102,8 @@ namespace Ipop.SocialVPN {
 
     public const int PERIOD = 10000;
 
-#if SVPN_NUNIT
-    protected readonly ISocialNode _node;
-#else
     protected readonly SocialNode _node;
-#endif
+
     protected readonly RpcManager _rpc;
 
     protected readonly SocialDnsManager _sdm;
@@ -111,15 +128,11 @@ namespace Ipop.SocialVPN {
 
     public ImmutableList<string> Blocked { get { return _blocked; }}
 
-#if SVPN_NUNIT
-    public SocialConnectionManager(ISocialNode node) {
-#else
     public SocialConnectionManager(SocialNode node, RpcManager rpc,
       SocialDnsManager sdm) {
       _rpc = rpc;
       _rpc.AddHandler(RPCID, this);
       _sdm = sdm;
-#endif
       _node = node;
       _networks = ImmutableDictionary<string, ISocialNetwork>.Empty;
       _fprs = ImmutableDictionary<string, string>.Empty;
@@ -156,12 +169,17 @@ namespace Ipop.SocialVPN {
         method = request["m"];
       }
 
+      if (_node.LocalUser == null && (method == String.Empty ||
+           method != "setuid")) {
+        throw new Exception("Uid not set");
+      }
+
       if(request.ContainsKey("a") && !request["a"].StartsWith("brunet")) {
         request["a"] = "brunet:node:" + request["a"];
       }
       switch(method) {
         case "add":
-          SendCertRequest(request["a"]);
+          SendCertRequest(request["a"], true);
           if(request.ContainsKey("f")) {
             _fprs = _fprs.InsertIntoNew(request["a"], request["f"]);
           }
@@ -175,12 +193,24 @@ namespace Ipop.SocialVPN {
           Unblock(request["a"]);
           break;
 
+        case "del":
+          _node.RemoveFriend(request["a"]);
+          break;
+
         case "login":
           Login(request["n"], request["u"], request["p"]);
           break;
 
         case "logout":
           Logout(request["n"]);
+          break;
+
+        case "setuid":
+          _node.SetUid(request["u"], request["p"]);
+          break;
+
+        case "shutdown":
+          _node.Close();
           break;
 
         case "sdns.search":
@@ -256,6 +286,9 @@ namespace Ipop.SocialVPN {
 
     protected void SendRpcMessage(Address addr, string method, 
       string query, bool secure) {
+
+      Console.WriteLine("Query {0} {1}", method, query);
+
 #if !SVPN_NUNIT
       string meth_call = RPCID + "." + method;
       Channel q = new Channel();
@@ -263,6 +296,9 @@ namespace Ipop.SocialVPN {
       q.CloseEvent += delegate(object obj, EventArgs eargs) {
         RpcResult res = (RpcResult) q.Dequeue();
         string result = (string) res.Result;
+
+        Console.WriteLine("Answer {0} {1}", method, result);
+
         if(method == "Ping") {
           _times = _times.InsertIntoNew(result, DateTime.Now);
         }
@@ -275,11 +311,12 @@ namespace Ipop.SocialVPN {
       else {
         sender = _node.Bso.GetSecureSender(addr);
       }
-      _rpc.Invoke(sender, q, meth_call, _node.LocalUser.Address, query);
+      _rpc.Invoke(sender, q, meth_call, _node.Address, query);
 #endif
     }
 
     protected void Login(string name, string uid, string password) {
+      _networks[name].SetData(_node.Address, _node.LocalUser.Fingerprint);
       _networks[name].Login(uid, password);
     }
 
@@ -287,8 +324,8 @@ namespace Ipop.SocialVPN {
       _networks[name].Logout();
     }
 
-    public void AddFriend(string cert) {
-      SocialUser user = _node.AddFriend(cert, null, null);
+    public void AddFriend(string address, string cert) {
+      SocialUser user = _node.AddFriend(address, cert, null, null);
 
       if(_pending.Contains(user.Address)) {
         _pending = _pending.RemoveFromNew(user.Address);
@@ -363,12 +400,12 @@ namespace Ipop.SocialVPN {
 
     public void GetPending() {
       foreach (ISocialNetwork network in _networks.Values) {
-        foreach(string address in network.Addresses.Keys) {
-          SendCertRequest(address);
+        foreach(KeyValuePair<string, string> kvp in network.Addresses) {
+          SendCertRequest(kvp.Key, false);
         }
       }
       foreach(string address in _pending) {
-        SendCertRequest(address);
+        SendCertRequest(address, false);
       }
     }
 
@@ -376,45 +413,54 @@ namespace Ipop.SocialVPN {
       _times = _times.InsertIntoNew(address, DateTime.Now);
 
       if(_node.IsAllowed(address)) {
-        return _node.LocalUser.Address;
+        return _node.Address;
       }
       else {
         return String.Empty;
       }
     }
 
-    protected void SendCertRequest(string address) {
-      if(!_node.Friends.ContainsKey(address) && 
-         address != _node.LocalUser.Address) {
-        SendRpcMessage(address, "AddCertRequest", _node.LocalUser.Certificate, 
-          false);
-        if(!_pending.Contains(address)) {
+    protected void SendCertRequest(string address, bool add_pending) {
+      string request = _node.LocalUser.Certificate;
+      if(!_node.Friends.ContainsKey(address) &&  address != _node.Address) {
+        SendRpcMessage(address, "AddCertRequest", request, false);
+        if(!_pending.Contains(address) && add_pending) {
           _pending = _pending.PushIntoNew(address);
         }
       }
     }
 
     protected string AddCertRequest(string address, string msg) {
-      SendRpcMessage(address, "AddCertReply", _node.LocalUser.Certificate, 
-        false);
-      AddFriend(msg);
-      return _node.LocalUser.Address;
+      string reply = _node.LocalUser.Certificate;
+      SendRpcMessage(address, "AddCertReply", reply, false);
+      AddFriend(address, msg);
+      return _node.Address;
     }
 
     protected string AddCertReply(string address, string msg) {
-      AddFriend(msg);
-      return _node.LocalUser.Address;
+      AddFriend(address, msg);
+      return _node.Address;
     }
 
     public string GetState(bool write) {
 #if SVPN_NUNIT
       return String.Empty;
 #else
+      FileState fstate = new FileState();
       SocialState state = new SocialState();
-      state.LocalUser = _node.LocalUser;
+
+      if(_node.LocalUser != null) {
+        state.LocalUser = _node.LocalUser;
+        fstate.Uid = state.LocalUser.Uid;
+        fstate.PCID = state.LocalUser.PCID;
+      }
+
       state.Friends = new SocialUser[_node.Friends.Values.Count];
       state.Networks = new NetworkState[_networks.Values.Count];
-      state.Pending = new List<string>();
+      state.Pending = new string[_pending.Count];
+      fstate.Friends = new FriendState[_node.Friends.Values.Count];
+
+      _pending.CopyTo(state.Pending, 0);
 
       int i = 0;
       foreach (KeyValuePair<string, ISocialNetwork> kvp 
@@ -422,66 +468,66 @@ namespace Ipop.SocialVPN {
         state.Networks[i] = new NetworkState();
         state.Networks[i].Name = kvp.Key;
         state.Networks[i].Message = kvp.Value.Message;
-      }
-
-      foreach (string address in _pending) {
-        if(!_node.Friends.ContainsKey(address)) {
-          state.Pending.Add(address);
-        }
+        i++;
       }
 
       i = 0;
       foreach(SocialUser user in _node.Friends.Values) {
-        SocialUser tmp_user = new SocialUser(user.Certificate);
-        tmp_user.IP = user.IP;
-        state.Friends[i++] = tmp_user;
+        string status;
+
         if(_node.IsAllowed(user.Address)) {
           if(IsOffline(user.Address)) {
-            tmp_user.Status = StatusTypes.Offline.ToString();
+            status = StatusTypes.Offline.ToString();
           }
           else {
-            tmp_user.Status = StatusTypes.Online.ToString();
+            status = StatusTypes.Online.ToString();
           }
         }
         else {
-          tmp_user.Status = StatusTypes.Blocked.ToString();
+          status = StatusTypes.Blocked.ToString();
         }
+        state.Friends[i] = new SocialUser(user.Certificate, user.IP, 
+          status);
+
+        FriendState friend = new FriendState();
+        friend.Certificate = user.Certificate;
+        friend.IP = user.IP;
+        friend.Status = status;
+        fstate.Friends[i] = friend;
+        i++;
       }
 
       if(write) {
-        Utils.WriteConfig(STATEPATH, state);
+        Utils.WriteConfig(STATEPATH, fstate);
       }
 
-      return SocialUtils.ObjectToXml<SocialState>(state);
+      return SocialUtils.ObjectToXml1<SocialState>(state);
 #endif
     }
 
     public void LoadState() {
 #if !SVPN_NUNIT
       try {
-        SocialState state = Utils.ReadConfig<SocialState>(STATEPATH);
-        foreach (SocialUser user in state.Friends) {
-          _node.AddFriend(user.Certificate, user.Uid, user.IP);
+        FileState fstate = Utils.ReadConfig<FileState>(STATEPATH);
+
+        if(fstate.Uid != null) {
+          _node.SetUid(fstate.Uid, fstate.PCID);
+        }
+
+        foreach (FriendState friend in fstate.Friends) {
+          SocialUser user = new SocialUser(friend.Certificate, friend.IP, 
+            friend.Status);
+          _node.AddFriend(user.Address, user.Certificate, user.Uid, user.IP);
           if(user.Status == StatusTypes.Blocked.ToString()) {
             _node.Block(user.Address);
           }
         }
       }
-      catch {}
+      catch (Exception e) {
+        Console.WriteLine(e);
+      }
 #endif
     }
-  }
-
-  public interface ISocialNode {
-    IDictionary<string, SocialUser> Friends { get;}
-    SocialUser LocalUser { get; }
-    SocialUser AddFriend(string cert, string uid, string ip);
-    void RemoveFriend(string address);
-    void Block(string address);
-    void Unblock(string address);
-    void AddDnsMapping(string alias, string ip);
-    void RemoveDnsMapping(string alias);
-    bool IsAllowed(string address);
   }
 
 #if SVPN_NUNIT
@@ -489,52 +535,6 @@ namespace Ipop.SocialVPN {
   public class SocialConnectionManagerTester {
     [Test]
     public void SocialConnectionManagerTest() {
-      Random rand = new Random();
-      byte[] certData = SocialUtils.ReadFileBytes("local.cert");
-      string certb64 = Convert.ToBase64String(certData);
-      SocialUser user = new SocialUser(certb64);
-
-      ImmutableDictionary<string, SocialUser> friends =
-        ImmutableDictionary<string, SocialUser>.Empty;
-
-      ImmutableDictionary<string, string> addresses =
-        ImmutableDictionary<string, string>.Empty;
-
-      ImmutableDictionary<string, string> fprs =
-        ImmutableDictionary<string, string>.Empty;
-
-      Mockery mocks = new Mockery();
-      ISocialNode node = mocks.NewMock<ISocialNode>();
-      ISocialNetwork network = mocks.NewMock<ISocialNetwork>();
-
-      Stub.On(node).GetProperty("Friends").Will(
-        Return.Value(friends));
-
-      Stub.On(node).GetProperty("LocalUser").Will(
-        Return.Value(user));
-
-      Stub.On(node).Method("IsAllowed").Will(
-       Return.Value(true));
-
-      Stub.On(network).GetProperty("Addresses").Will(
-        Return.Value(addresses));
-
-      Stub.On(network).GetProperty("Fingerprints").Will(
-        Return.Value(fprs));
-
-      SocialConnectionManager scm = new SocialConnectionManager(node);
-
-      string fpr1 = rand.NextDouble().ToString();
-      string addr1 = rand.NextDouble().ToString();
-      string jid1 = rand.NextDouble().ToString();
-
-      addresses = addresses.InsertIntoNew(addr1, jid1);
-      fprs = fprs.InsertIntoNew(addr1, fpr1);
-
-      scm.Register("test", network);
-      scm.GetPending();
-
-      Assert.AreEqual(addr1 ,scm.Pending[0]);
     }
   } 
 #endif

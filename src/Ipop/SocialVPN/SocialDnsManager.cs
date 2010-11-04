@@ -43,6 +43,8 @@ namespace Ipop.SocialVPN {
 
   public class SocialDnsManager : IDnsResolver {
 
+    public const string DNSSUFFIX = ".sdns";
+
     protected const string STATEPATH = "sdnsstate.xml";
 
     protected ImmutableDictionary<string, DnsMapping> _mappings;
@@ -64,29 +66,22 @@ namespace Ipop.SocialVPN {
       set { _sender.Value = value; }
     }
 
-#if SVPN_NUNIT
-    protected readonly ISocialNode _node;
-
-    public SocialDnsManager(ISocialNode node) {
-#else
     protected readonly SocialNode _node;
 
     public SocialDnsManager(SocialNode node) {
-#endif
       _node = node;
       _mappings = ImmutableDictionary<string, DnsMapping>.Empty;
       _tmappings = ImmutableDictionary<string, DnsMapping>.Empty;
       _sender = new WriteOnce<IRpcSender>();
       LoadState();
-      AddDnsMapping(_node.LocalUser.PCID, _node.LocalUser.IP);
     }
 
     protected string GetAddress(string ip) {
 #if SVPN_NUNIT
       return "address" + ip;
 #else
-      if(ip == _node.LocalUser.IP) {
-        return _node.LocalUser.Address;
+      if(ip == _node.IP) {
+        return _node.Address;
       }
 
       foreach(SocialUser friend in _node.Friends.Values) {
@@ -103,8 +98,8 @@ namespace Ipop.SocialVPN {
 #if SVPN_NUNIT
       return address;
 #else
-      if(address == _node.LocalUser.Address) {
-        return _node.LocalUser.IP;
+      if(address == _node.Address) {
+        return _node.IP;
       }
 
       SocialUser friend;
@@ -121,10 +116,6 @@ namespace Ipop.SocialVPN {
 #if SVPN_NUNIT
       return address;
 #else
-      if(address == _node.LocalUser.Address) {
-        return _node.LocalUser.Uid;
-      }
-
       SocialUser friend;
       if(_node.Friends.TryGetValue(address, out friend)) {
         return friend.Uid;
@@ -136,7 +127,10 @@ namespace Ipop.SocialVPN {
     }
 
     public DnsMapping AddDnsMapping(string alias, string ip) {
-      return AddDnsMapping(alias, ip, _node.LocalUser.Uid);
+      if(ip == null || ip == String.Empty) {
+        ip = _node.IP;
+      }
+      return AddDnsMapping(alias, ip, _node.Address);
     }
 
     public DnsMapping AddDnsMapping(string alias, string ip, string source) {
@@ -167,7 +161,7 @@ namespace Ipop.SocialVPN {
           sender.SendRpcMessage(address, "AddTmpMapping", mapping.ToString());
         }
       }
-      return _node.LocalUser.Address;
+      return _node.Address;
     }
 
     public string AddTmpMapping(string address, string smapping) {
@@ -183,7 +177,7 @@ namespace Ipop.SocialVPN {
       if(!_tmappings.ContainsKey(id)) {
         _tmappings = _tmappings.InsertIntoNew(id, mapping);
       }
-      return _node.LocalUser.Address;
+      return _node.Address;
     }
 
     public void ClearResults() {
@@ -229,6 +223,11 @@ namespace Ipop.SocialVPN {
     }
 
     public string DnsResolve(string name) {
+
+      if(!name.EndsWith(DNSSUFFIX)) {
+        return null;
+      }
+
       DnsMapping mapping;
       if(_mappings.TryGetValue(name, out mapping)) {
         return mapping.IP;
@@ -298,9 +297,18 @@ namespace Ipop.SocialVPN {
     }
 
     public static string CheckAlias(string alias) {
+      alias = alias.Trim();
+
+      // TODO - Do much better sanity check, read RFC
+      if(alias.Contains(" ")) {
+        throw new Exception("Invalid domain name");
+      }
+
+      alias = alias.ToLower();
+
       string result = alias;
-      if(!alias.EndsWith("." + SocialNode.DNSSUFFIX)) {
-        result = alias + "." + SocialNode.DNSSUFFIX;
+      if(!alias.EndsWith(SocialDnsManager.DNSSUFFIX)) {
+        result = alias + SocialDnsManager.DNSSUFFIX;
       }
       return result;
     }

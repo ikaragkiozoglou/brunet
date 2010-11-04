@@ -146,11 +146,13 @@ function clearInput() {
 function loadAdd() {
   clearInput();
   var msg;
-
-  $("<label/>", { text : "Enter DNS Name"}).appendTo("#inputdiv");
+ 
+  var nlabel = "Enter a domain name";
+  var iplabel = "Enter IP address or leave blank to name this machine";
+  $("<label/>", { text : nlabel}).appendTo("#inputdiv");
   $("<input/>", { 'type' : "text", 'class' : "input",
     'name' : "dnsname"}).appendTo("#inputdiv");
-  $("<label/>", { text : "Enter IP Address"}).appendTo("#inputdiv");
+  $("<label/>", { text : iplabel}).appendTo("#inputdiv");
   $("<input/>", { "type" : "text", 'class' : "input",
     'name' : "dnsip"}).appendTo("#inputdiv");
 

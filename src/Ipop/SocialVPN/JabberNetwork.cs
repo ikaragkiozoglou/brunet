@@ -94,13 +94,19 @@ namespace Ipop.SocialVPN {
 
     protected readonly int _port;
 
-    protected readonly string _data;
-
     protected readonly string _host;
 
     protected readonly Timer _timer;
 
-    protected string _message;
+    private string _data;
+
+    private string _message;
+
+    private string _uid;
+
+    private string _password;
+
+    private bool _auto_connect;
 
     public string Message { get { return _message; }}
 
@@ -113,14 +119,17 @@ namespace Ipop.SocialVPN {
     }
 
     public JabberNetwork(string uid, string password, 
-      string host, string port, string fingerprint, string address) {
+      string host, string port) {
       _addresses = ImmutableDictionary<string, string>.Empty;
       _fingerprints = ImmutableDictionary<string, string>.Empty;
       _doc = new XmlDocument();
       _port = Int32.Parse(port);
       _host = host;
-      _data = fingerprint + DELIM + address;
+      _data = String.Empty;
       _message = "Offline";
+      _uid = uid;
+      _password = password;
+      _auto_connect = false;
       _timer = new Timer(TimerHandler, null, PUB_PERIOD, PUB_PERIOD);
 
       _xmpp = new XmppService(uid, password, _port);
@@ -132,6 +141,10 @@ namespace Ipop.SocialVPN {
       _xmpp.OnError += HandleError;
     }
 
+    public void SetData(string address, string fingerprint) {
+      _data = fingerprint + DELIM + address;
+    }
+
     protected void HandleAuthenticate(object sender) {
       _message = "Online as " + _xmpp.JID.User + "@" + _xmpp.JID.Server;
     }
@@ -141,7 +154,7 @@ namespace Ipop.SocialVPN {
     }
 
     protected void HandleError(object sender, Exception e) {
-      _message = "error occured";
+      _message = "Error";
     }
 
     protected void HandlePresence(object sender, Presence pres) {
@@ -184,19 +197,26 @@ namespace Ipop.SocialVPN {
     }
 
     public void TimerHandler(object obj) {
+      if(!_message.StartsWith("Online") && _auto_connect) {
+        Login(_uid, _password);
+      }
       Publish();
     }
 
     public void Login(string uid, string password) {
-      if(_message != "Online") {
+      if(!_xmpp.IsAuthenticated || !_message.StartsWith("Online")) {
         _xmpp.Connect(uid, password, _host, _port);
         _message = "...connecting...";
+        _uid = uid;
+        _password = password;
+        _auto_connect = true;
       }
     }
 
     public void Logout() {
       _xmpp.Logout();
       _message = "Offline";
+      _auto_connect = false;
     }
 
   }

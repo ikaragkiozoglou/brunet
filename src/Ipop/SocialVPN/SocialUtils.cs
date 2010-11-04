@@ -24,7 +24,6 @@ THE SOFTWARE.
 using System;
 using System.IO;
 using System.Net.Security;
-using System.Security.Cryptography.X509Certificates;
 using System.Security.Cryptography;
 using System.Collections.Generic;
 using System.Text;
@@ -35,7 +34,6 @@ using System.Net;
 
 using Brunet.Util;
 using Brunet.Applications;
-using Brunet.Security;
 
 #if SVPN_NUNIT
 using NUnit.Framework;
@@ -45,24 +43,20 @@ namespace Ipop.SocialVPN {
 
   public static class SocialUtils {
 
-    public static Certificate CreateCertificate(string uid, string name,
-                                                string pcid, string version,
-                                                string country, 
-                                                string address,
-                                                string keyPath) {
-      RSACryptoServiceProvider rsa = new RSACryptoServiceProvider();  
-      CertificateMaker cm = new CertificateMaker(country, version, pcid,
-                                                 name, uid, rsa, address);
-      Certificate cert = cm.Sign(cm, rsa);
-
-      if (keyPath != null) {
-        string lc_path = "local.cert";
-        string lc_path2 = pcid + ".cert";
-        WriteToFile(rsa.ExportCspBlob(true), keyPath);
-        WriteToFile(cert.X509.RawData, lc_path);
-        WriteToFile(cert.X509.RawData, lc_path2);
-      }
-      return cert;
+    public static SocialConfig CreateConfig() {
+      SocialConfig social_config = new SocialConfig();
+      social_config.BrunetConfig = "brunet.config";
+      social_config.IpopConfig = "ipop.config";
+      social_config.HttpPort = "58888";
+      social_config.JabberPort = "5222";
+      social_config.JabberID = "user@example.com";
+      social_config.JabberPass = "password";
+      social_config.AutoLogin = false;
+      social_config.GlobalBlock = true;
+      social_config.AutoFriend = false;
+      social_config.AutoDns = true;
+      Utils.WriteConfig(SocialNode.CONFIGPATH, social_config);
+      return social_config;
     }
 
     public static string GetSHA1HashString(string input) {

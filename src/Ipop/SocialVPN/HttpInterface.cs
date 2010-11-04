@@ -38,6 +38,8 @@ namespace Ipop.SocialVPN {
     
     protected readonly Thread _runner;
 
+    protected readonly string _port;
+
     protected bool _running;
 
     public HttpInterface(string port) {
@@ -46,6 +48,7 @@ namespace Ipop.SocialVPN {
       _runner = new Thread(Run);
       _runner.IsBackground = true;
       _running = false;
+      _port = port;
     }
 
     protected string Process(Dictionary<string, string> request) {
@@ -58,7 +61,13 @@ namespace Ipop.SocialVPN {
         } catch (Exception e) {
           response = SocialUtils.ObjectToXml<string>(e.Message);
         }
-      }      
+      }
+
+      if(request.ContainsKey("html")) {
+        response = "<html><head><meta HTTP-EQUIV=\"REFRESH\" " +
+          "content=\"0;url=html\" /></head></html>";
+      }
+
       return response;
     }
 
@@ -162,6 +171,10 @@ namespace Ipop.SocialVPN {
             responseString = text.ReadToEnd();
           }
           response.ContentType = "text/html";
+        }
+
+        if(responseString.StartsWith("<html>")) {
+          response.ContentType = "text.html";
         }
 
         byte[] buffer = System.Text.Encoding.UTF8.GetBytes(responseString);

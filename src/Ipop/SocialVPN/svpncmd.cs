@@ -45,103 +45,59 @@ namespace Ipop.SocialVPN {
       }
     }
 
-    public static void CreateConfig(string uid) {
-      SocialConfig social_config = new SocialConfig();
-      social_config.BrunetConfig = "brunet.config";
-      social_config.IpopConfig = "ipop.config";
-      social_config.HttpPort = "58888";
-      social_config.JabberPort = "5222";
-      social_config.JabberID = uid;
-      social_config.JabberPass = "password";
-      social_config.AutoLogin = false;
-      social_config.GlobalBlock = true;
-      social_config.AutoFriend = false;
-      social_config.AutoDns = true;
-      Utils.WriteConfig("social.config", social_config);
-    }
-
-    public static void CreateCertificate(string uid) {
-      string pcid = System.Net.Dns.GetHostName();
-      string name = uid;
-      CreateCertificate(uid, pcid, name);
-    }
-
-    public static void CreateCertificate(string uid, string pcid, 
-      string name) {
-      CreateConfig(uid);
-      string config_path = "brunet.config";
-      NodeConfig node_config = Utils.ReadConfig<NodeConfig>(config_path);
-      node_config.XmppServices.Enabled = false;
-      node_config.XmppServices.Username = uid;
-      node_config.XmppServices.Password = "password";
-      node_config.XmppServices.Port = 5222;
-      string version = "0.4";
-      string country = "country";
-
-      node_config.NodeAddress = Utils.GenerateAHAddress().ToString();
-      Utils.WriteConfig(config_path, node_config);
-      SocialUtils.CreateCertificate(uid, name, pcid, version, country,
-                                    node_config.NodeAddress, 
-                                    node_config.Security.KeyPath);
-
-    }
-
-    public static string Add(string filename, string uid, string ip) {
-      byte[] certData = SocialUtils.ReadFileBytes(filename);
-      string cert = Convert.ToBase64String(certData);
-
+    public static string Add(string address) {
       Dictionary<string, string> parameters = 
         new Dictionary<string, string>();
 
       parameters["m"] = "add";
-      parameters["cert"] = cert;
-      parameters["uid"] = uid;
-      if (ip !=null) parameters["ip"] = ip;
+      parameters["a"] = address;
       return Print(SocialUtils.Request(_url, parameters));
     }
 
-    public static string Remove(string alias) {
+    public static string Remove(string address) {
       Dictionary<string, string> parameters = 
         new Dictionary<string, string>();
 
-      parameters["m"] = "remove";
-      parameters["alias"] = alias;
+      parameters["m"] = "del";
+      parameters["a"] = address;
       return Print(SocialUtils.Request(_url, parameters));
     }
 
-    public static string Block(string uid) {
+    public static string Block(string address) {
       Dictionary<string, string> parameters = 
         new Dictionary<string, string>();
 
       parameters["m"] = "block";
-      parameters["uid"] = uid;
+      parameters["a"] = address;
       return Print(SocialUtils.Request(_url, parameters));
     }
 
-    public static string Unblock(string uid) {
+    public static string Unblock(string address) {
       Dictionary<string, string> parameters = 
         new Dictionary<string, string>();
 
       parameters["m"] = "unblock";
-      parameters["uid"] = uid;
+      parameters["a"] = address;
       return Print(SocialUtils.Request(_url, parameters));
     }
 
-    public static string Login(string user, string pass) {
+    public static string Login(string network, string user, string pass) {
       Dictionary<string, string> parameters = 
         new Dictionary<string, string>();
 
-      parameters["m"] = "jabber.login";
-      parameters["uid"] = user;
-      parameters["pass"] = pass;
+      parameters["m"] = "login";
+      parameters["n"] = network;
+      parameters["u"] = user;
+      parameters["p"] = pass;
       return Print(SocialUtils.Request(_url, parameters));
     }
 
-    public static string Logout() {
+    public static string Logout(string network) {
       Dictionary<string, string> parameters = 
         new Dictionary<string, string>();
 
-      parameters["m"] = "jabber.logout";
+      parameters["m"] = "logout";
+      parameters["n"] = network;
       return Print(SocialUtils.Request(_url, parameters));
     }
 
@@ -161,14 +117,12 @@ namespace Ipop.SocialVPN {
     public static void ShowHelp() {
       string help = "usage: svpncmd.exe <option> <fingerprint>\n\n" +
                     "options:\n" +
-                    "  cert <jabberid> <pcid> - create cert w/pcid\n" +
-                    "  login <pass> - log in user\n" +
-                    "  logout - log out user\n" +
-                    "  add <certfile> <uid> - add by certfile\n" +
-                    "  addip <certfile> <uid> <ip> - add by certfile w/ip\n" +
-                    "  remove <alias> - remove by alias\n" +
-                    "  block <uid> - block by uid\n" + 
-                    "  unblock <uid> - unblock by uid\n" + 
+                    "  login <network> <user> <pass> - log in user\n" +
+                    "  logout <network> - log out user\n" +
+                    "  add <address> - add a friend\n" +
+                    "  remove <address> - remove a friend\n" +
+                    "  block <address> - block a friend\n" + 
+                    "  unblock <address> - unblock a friend\n" + 
                     "  getstate - print current state in xml\n" + 
                     "  help - shows this help";
       Console.WriteLine(help);
@@ -188,24 +142,16 @@ namespace Ipop.SocialVPN {
           ShowHelp();
           break;
 
-        case "cert":
-          CreateCertificate(args[1]);
-          break;
-
         case "login":
-          Login(args[1], args[2]);
+          Login(args[1], args[2], args[3]);
           break;
 
         case "logout":
-          Logout();
+          Logout(args[1]);
           break;
 
         case "add":
-          Add(args[1], args[2], null);
-          break;
-
-        case "addip":
-          Add(args[1], args[2], args[3]);
+          Add(args[1]);
           break;
 
         case "remove":

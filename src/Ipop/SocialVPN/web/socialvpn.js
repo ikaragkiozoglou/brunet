@@ -21,6 +21,7 @@ THE SOFTWARE.
 */
 
 var prevState = "";
+var refresh = 1;
 
 $(document).ready(init);
 
@@ -47,9 +48,11 @@ function loadPage() {
 function loadHeader() {
   $("<h1/>", {text : 'SocialVPN'}).appendTo("#subheader");
   var menu = $("<ul/>").appendTo("#subheader");
+  menu.append($("<li/>", {text : 'Add Friend', click : loadAdd}));
   menu.append($("<li/>", {text : 'Login', 'id' : "login", 
     click : loadLogin}));
-  menu.append($("<li/>", {text : 'Add Friend', click : loadAdd}));
+  menu.append($("<li/>", {text : 'Shutdown', 'id' : "shutdown", 
+    click : doShutdown}));
 }
 
 function loadNav() {
@@ -115,6 +118,24 @@ function loadLogin() {
     buttons : { "Login" : doLogin, "Cancel" : clearInput}});
 }
 
+function loadSetUid() {
+  clearInput();
+  var msg;
+
+  var ulabel = "Enter JabberID (ex: example@gmail.com)";
+  var nlabel = "Enter PCID (ex: home-pc)";
+  $("<label/>", { text : ulabel}).appendTo("#inputdiv");
+  $("<input/>", { 'type' : "text", 'class' : "input",
+    'name' : "uid"}).appendTo("#inputdiv");
+  $("<label/>", { text : nlabel}).appendTo("#inputdiv");
+  $("<input/>", { "type" : "text", 'class' : "input",
+    'name' : "pcid"}).appendTo("#inputdiv");
+
+  msg = "Provide your Jabber ID and a name for your PC below";
+  $("#inputdiv").dialog({ modal : true, title : msg, width : 700,
+    buttons : { "Submit" : doSetUid, "Cancel" : clearInput}});
+}
+
 function loadAdd() {
   clearInput();
   var user = parseUser($("LocalUser", prevState));
@@ -133,7 +154,7 @@ function loadAdd() {
   $("<p/>", { text: msg}).appendTo("#inputdiv");
 
   msg = "http://127.0.0.1:58888/state.xml?m=add&a=" + user.address +
-  "&f=" + user.fpr;
+  "&f=" + user.fpr + "&html=1";
   $("<p/>", { text: msg}).appendTo("#inputdiv");
 
   msg = "- Thank you";
@@ -161,13 +182,27 @@ function doLogin() {
   clearInput();
 }
 
+function doSetUid() {
+  var method = "setuid";
+  var uid = encodeURIComponent($(":input[name=uid]").val());
+  var pcid = encodeURIComponent($(":input[name=pcid]").val());
+  $.ajax({type: "POST", url: "state.xml", data : "m=" + method + 
+    "&u=" + uid + "&p=" + pcid, success: processState});
+  refresh = 1;
+  clearInput();
+}
+
 function doLogout() {
   var method = "logout";
   var network = "jabber";
   $.ajax({type: "POST", url: "state.xml", data : "m=" + method + 
     "&n=" + network, success: processState});
+}
 
-  clearInput();
+function doShutdown() {
+  var method = "shutdown";
+  $.ajax({type: "POST", url: "state.xml", data : "m=" + method,
+    success: processState});
 }
 
 function doAdd() {
@@ -202,16 +237,30 @@ function doUnblock() {
     clearInput(); }, "Cancel" : clearInput }});
 }
 
+function doDelete() {
+  doCall("del",this.id);
+}
+
 function doCall(method, address) {
   $.ajax({type: "POST", url: "state.xml", data : "m=" + method + 
     "&a=" + address, success: processState});
 }
 
 function processState(state) {
+  if(refresh == 0) {
+    return;
+  }
+
   var exception = $("string", state).text();
   var pending = $("Pending", state).text();
   if(exception != "" && pending == "") {
-    alert(exception);
+    if(exception == "Uid not set") {
+      refresh = 0;
+      loadSetUid();
+    }
+    else {
+      alert(exception);
+    }
     return;
   }
   prevState = state;
@@ -352,6 +401,9 @@ function addFriend(user) {
     optcol.append($("<p/>",{text: 'Allow', 'class': 'opts',
       'id' : user.address, click : doUnblock}));
   }
+
+  //optcol.append($("<p/>",{text: 'Delete', 'class': 'opts',
+  //  'id' : user.address, click : doDelete}));
 
   $("body").data(user.address, user);
 }
