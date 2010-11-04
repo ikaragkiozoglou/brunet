@@ -50,7 +50,7 @@ namespace Ipop.Managed.Translation {
                                         MemBlock old_dest_ip) {
       // SSDP runs on 1900
       string s_source_ip = Utils.MemBlockToString(source_ip, '.');
-      Console.WriteLine("    Location --> " + s_source_ip);
+      //Console.WriteLine("    Location --> " + s_source_ip);
       return UPnPTranslate(packet, s_source_ip);
     }
     
@@ -66,8 +66,8 @@ namespace Ipop.Managed.Translation {
     public static UdpPacket UPnPTranslate(UdpPacket udpp, string newIP) {
       try {
       string rawData = udpp.Payload.GetString(System.Text.Encoding.UTF8);
-      Console.WriteLine("OLD PACKET:");
-      Console.WriteLine(rawData+"\n");
+      //Console.WriteLine("OLD PACKET:");
+      //Console.WriteLine(rawData+"\n");
       StringBuilder data = new StringBuilder(rawData);
       int httpDataStart = rawData.IndexOf("HTTP/")+5;
       if(httpDataStart < 5) { return udpp; } //not an http packet, don't
@@ -82,7 +82,7 @@ namespace Ipop.Managed.Translation {
           "Incompatable major version of an HTTP packet found: " +
             majorVersion + ". Not performing translation on packet."
         );
-        Console.WriteLine("Bad major http version");
+        //Console.WriteLine("Bad major http version");
         return udpp;
       }
       // TODO: This code is really slow, we need some regex up in here
@@ -120,14 +120,14 @@ namespace Ipop.Managed.Translation {
       );
       data.Remove(sipLocation, eipLocation-sipLocation);
       data.Insert(sipLocation, newIP);
-      Console.WriteLine("NEW PACKET:");
-      Console.WriteLine(data.ToString());
+      //Console.WriteLine("NEW PACKET:");
+      //Console.WriteLine(data.ToString());
       return new UdpPacket(
         udpp.SourcePort, udpp.DestinationPort,
         MemBlock.Reference(Encoding.UTF8.GetBytes(data.ToString()))
       );
       } catch(Exception ex) {
-        Console.WriteLine("EXCEPTION!!! " + ex.ToString());
+        //Console.WriteLine("EXCEPTION!!! " + ex.ToString());
         return udpp;
       }
     }
