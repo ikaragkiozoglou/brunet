@@ -75,7 +75,7 @@ namespace Brunet.Collections {
 #endif
     {
       if(_stopped == 1) {
-        throw new Exception("Stopped!");
+        return;
       }
 
       Dictionary<K, V> removed = null;
@@ -85,12 +85,13 @@ namespace Brunet.Collections {
       _first = new Dictionary<K, V>();
       _sync.ReleaseWriterLock();
 
-      if(EvictionHandler == null) {
+      var eh = EvictionHandler;
+      if(eh == null) {
         return;
       }
 
       foreach(KeyValuePair<K, V> kvp in removed) {
-        EvictionHandler(this, new EvictionArgs(kvp.Key, kvp.Value));
+        eh(this, new EvictionArgs(kvp.Key, kvp.Value));
       }
     }
 
@@ -160,7 +161,7 @@ namespace Brunet.Collections {
     /// <summary> Must stop the Recycling thread.</summary>
     public void Stop()
     {
-      if(System.Threading.Interlocked.Exchange(ref _stopped, 1) == 0) {
+      if(System.Threading.Interlocked.Exchange(ref _stopped, 1) == 1) {
         return;
       }
 

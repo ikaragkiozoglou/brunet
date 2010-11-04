@@ -48,7 +48,20 @@ namespace Brunet.Connections {
     /**
      * If IsActive, then start trying to get connections.
      */
-    abstract public void Activate();
+    virtual public void Activate()
+    {
+    }
+
+    virtual public void Start()
+    {
+      IsActive = true;
+      Activate();
+    }
+
+    virtual public void Stop()
+    {
+      IsActive = false;
+    }
 
     /**
      * When IsActive is false, the ConnectionOverlord does nothing
@@ -149,8 +162,7 @@ namespace Brunet.Connections {
        * the Connector starts.  If it returns true, the Connector
        * will finish immediately without sending an ConnectToMessage
        */
-      Linker l = new Linker(_node, target, null, ConnectionType,
-          _node.Address.ToString());
+      Linker l = new Linker(_node, target, null, ConnectionType, token);
       object link_task = l.Task;
       Connector.AbortCheck abort = delegate(Connector c) {
         bool stop = false;
