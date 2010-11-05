@@ -31,6 +31,7 @@ using Brunet.Security;
 using Brunet.Applications;
 using Brunet.Collections;
 using Brunet.Concurrent;
+using Brunet.Connections;
 using Brunet.Symphony;
 using Brunet.Security.PeerSec.Symphony;
 
@@ -52,6 +53,8 @@ namespace Ipop.SocialVPN {
     protected ImmutableDictionary<string, SocialUser> _friends;
 
     protected readonly RSACryptoServiceProvider _rsa;
+
+    protected readonly ManagedConnectionOverlord _mco;
 
     protected readonly string _address;
 
@@ -86,6 +89,8 @@ namespace Ipop.SocialVPN {
       _rsa = rsa;
       _address = AppNode.Node.Address.ToString();
       _user = new WriteOnce<SocialUser>();
+      _mco = new ManagedConnectionOverlord(AppNode.Node);
+      AppNode.Node.AddConnectionOverlord(_mco);
     }
 
     public void SetUid(string uid, string pcid) {
@@ -121,7 +126,7 @@ namespace Ipop.SocialVPN {
       SocialUser user = new SocialUser(cert, new_ip, null);
 
       Bso.CertificateHandler.AddCACertificate(user.X509);
-      Node.ManagedCO.AddAddress(addr);
+      _mco.Set(addr);
       _friends = _friends.InsertIntoNew(address, user);
 
       return user;
@@ -131,7 +136,7 @@ namespace Ipop.SocialVPN {
       SocialUser user = _friends[address];
       Address addr = AddressParser.Parse(user.Address);
 
-      Node.ManagedCO.RemoveAddress(addr);
+      _mco.Unset(addr);
       _marad.RemoveIPMapping(user.IP);
 
       ImmutableDictionary<string, SocialUser> old;
