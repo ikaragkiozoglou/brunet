@@ -60,19 +60,19 @@ namespace Ipop.Managed {
     protected readonly StructuredNode _node;
 
     /// <summary>Contains ip:hostname mapping</summary>
-    protected readonly Hashtable _dns_a;
+    protected readonly Dictionary<string, string> _dns_a;
 
     /// <summary>Contains hostname:ip mapping</summary>
-    protected readonly Hashtable _dns_ptr;
+    protected readonly Dictionary<string, string> _dns_ptr;
 
     /// <summary>Maps MemBlock IP Addresses to Brunet Address as Address</summary>
-    protected readonly Hashtable _ip_addr;
+    protected readonly Dictionary<MemBlock, Address> _ip_addr;
 
     /// <summary>Maps Brunet Address as Address to MemBlock IP Addresses</summary>
-    protected readonly Hashtable _addr_ip;
+    protected readonly Dictionary<Address, MemBlock> _addr_ip;
 
     /// <summary>Keeps track of blocked addresses</summary>
-    protected readonly Hashtable _blocked_addrs;
+    protected readonly Dictionary<Address, MemBlock> _blocked_addrs;
 
     /// <summary>MemBlock of the IP mapped to local node</summary>
     protected readonly MemBlock _local_ip;
@@ -81,7 +81,7 @@ namespace Ipop.Managed {
     protected readonly DhcpServer _dhcp;
 
     /// <summary>Array list of multicast addresses</summary>
-    public readonly ArrayList mcast_addr;
+    public readonly List<Address> mcast_addr;
 
     /// <summary>Synchronization object</summary>
     protected readonly object _sync;
@@ -104,12 +104,12 @@ namespace Ipop.Managed {
           name_server, forward_queries)
     {
       _node = node;
-      _dns_a = new Hashtable();
-      _dns_ptr = new Hashtable();
-      _ip_addr = new Hashtable();
-      _addr_ip = new Hashtable();
-      _blocked_addrs = new Hashtable();
-      mcast_addr = new ArrayList();
+      _dns_a = new Dictionary<string, string>();
+      _dns_ptr = new Dictionary<string, string>();
+      _ip_addr = new Dictionary<MemBlock, Address>();
+      _addr_ip = new Dictionary<Address, MemBlock>();
+      _blocked_addrs = new Dictionary<Address, MemBlock>();
+      mcast_addr = new List<Address>();
 
       _dhcp = dhcp;
       _local_ip = local_ip;
@@ -133,7 +133,7 @@ namespace Ipop.Managed {
     /// <param name="ip">IP address of the name that's being looked up</param>
     /// <returns>Returns the name as string of the IP specified</returns>
     public override String NameLookUp(String ip) {
-      return (String)_dns_ptr[ip];
+      return _dns_ptr[ip];
     }
 
     /// <summary>
@@ -147,7 +147,7 @@ namespace Ipop.Managed {
         ip = _resolver.Value.DnsResolve(name);
       }
       if (ip == null) {
-        ip = (String)_dns_a[name];
+        ip = _dns_a[name];
       }
       return ip;
     }
@@ -162,7 +162,7 @@ namespace Ipop.Managed {
     <returns>The translated IP Packet.</returns>
     */
     public MemBlock Translate(MemBlock packet, Address from) {
-      MemBlock source_ip = (MemBlock) _addr_ip[from];
+      MemBlock source_ip = _addr_ip[from];
       if(source_ip == null) {
         throw new Exception("Invalid mapping " + from + ".");
       }
@@ -213,88 +213,11 @@ namespace Ipop.Managed {
     /// <param name="IP">A MemBlock of the IP</param>
     /// <returns>A brunet Address for the IP</returns>
     public Address Resolve(MemBlock IP) {
-      return (Address)_ip_addr[IP];
+      return _ip_addr[IP];
     }
 
     public bool Check(MemBlock ip, Address addr) {
       return _addr_ip[addr].Equals(ip) && _ip_addr[ip].Equals(addr);
-    }
-
-    /// <summary>
-    /// Registers a name and addr combination and returns an IP.  Idempotent
-    /// and changes the hostname if one already exists.
-    /// </summary>
-    /// <param name="name">A string name to be added to DNS</param>
-    /// <param name="addr">A brunet address that is to be mapped</param>
-    public string RegisterMapping(String name, Address addr) {
-      String ips = null;
-      lock(_sync) {
-        MemBlock ip = (MemBlock) _addr_ip[addr];
-        string ip_dns = (String)_dns_a[name];
-
-        if(ip == null && _blocked_addrs.Contains(addr)) {
-          ip = (MemBlock) _blocked_addrs[addr];
-          _blocked_addrs.Remove(addr);
-          _addr_ip.Add(addr, ip);
-          _ip_addr.Add(ip, addr);
-          mcast_addr.Add(addr);
-        }
-
-        if(ip != null) {
-          ips = Utils.MemBlockToString(ip, '.');
-        }
-
-        // either both null, the same value, or ip_dns isn't set
-        if(ips != ip_dns && ip_dns != null) {
-          throw new Exception(String.Format
-            ("Name ({0}) already exists with different address.", name));
-        } else if(ips == null) {
-          do {
-            ip = MemBlock.Reference(_dhcp.RandomIPAddress());
-          } while (_ip_addr.ContainsValue(ip));
-          ips = Utils.MemBlockToString(ip, '.');
-          _addr_ip.Add(addr, ip);
-          _ip_addr.Add(ip, addr);
-          mcast_addr.Add(addr);
-        }
-
-        // set the dns name only once!
-        if(ip_dns == null) {
-          // We don't support multiple hostnames per ID
-          if(_dns_ptr.Contains(ips)) {
-            _dns_a.Remove(_dns_ptr[ips]);
-            _dns_ptr.Remove(ips);
-          }
-          _dns_a.Add(name, ips);
-          _dns_ptr.Add(ips, name);
-        }
-      }
-      return ips;
-    }
-
-    /// <summary>
-    /// Unregisters a name and potentially ip and address mapping
-    /// </summary>
-    /// <param name="name">A string name that needs to be removed</param>
-    /// <returns>true if successful</returns>
-    public bool UnregisterMapping(String name) {
-      lock(_sync) {
-        if (!_dns_a.Contains(name)) {
-          throw new Exception(String.Format("Name ({0}) does not exists", name));
-        }
-
-        String ips = (String)_dns_a[name];
-        MemBlock  ip = MemBlock.Reference(Utils.StringToBytes(ips, '.'));
-
-        _dns_a.Remove(name);
-        _dns_ptr.Remove(ips);
-        Address addr = (Address)_ip_addr[ip];
-        _ip_addr.Remove(ip);
-        _addr_ip.Remove(addr);
-        _blocked_addrs.Add(addr,ip);
-        mcast_addr.Remove(addr);
-      }
-      return true;
     }
 
     /// <summary>
@@ -321,7 +244,7 @@ namespace Ipop.Managed {
         if(ip == null || ip == String.Empty) {
           do {
             ip_bytes = MemBlock.Reference(_dhcp.RandomIPAddress());
-          } while (_ip_addr.ContainsValue(ip_bytes));
+          } while (_ip_addr.ContainsKey(ip_bytes));
         }
         else {
           ip_bytes = MemBlock.Reference(Utils.StringToBytes(ip, '.'));
@@ -347,7 +270,7 @@ namespace Ipop.Managed {
     /// <param name="ip">IP address to remove</param>
     public void RemoveIPMapping(string ip) {
       MemBlock ip_bytes = MemBlock.Reference(Utils.StringToBytes(ip, '.'));
-      Address addr = (Address) _ip_addr[ip_bytes];
+      Address addr = _ip_addr[ip_bytes];
       lock(_sync) {
         _ip_addr.Remove(ip_bytes);
         _addr_ip.Remove(addr);
@@ -376,7 +299,7 @@ namespace Ipop.Managed {
     /// <param name="alias">Dns alias to remove</param>
     /// <param name="reverse">If true, remove reverse mapping</param>
     public void RemoveDnsMapping(string alias, bool reverse) {
-      string ip = (string)_dns_a[alias];
+      string ip = _dns_a[alias];
       lock (_sync) {
         _dns_a.Remove(alias);
         if (reverse) {
