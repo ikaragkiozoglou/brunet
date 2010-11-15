@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # set variables
-root=`whoami`
+root=$(whoami)
 device=tapipop
 pid_file=/var/run/dhclient.$device.pid
 user=$(ls -l SocialVPN.exe | awk '{ print $3 }')

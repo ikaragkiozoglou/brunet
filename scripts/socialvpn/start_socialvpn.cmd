@@ -1,0 +1,3 @@
+@net start SocialVPN
+@pause
+
