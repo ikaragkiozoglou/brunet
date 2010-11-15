@@ -3,7 +3,7 @@
 
 Name "SocialVPN 0.5.0"
 Outfile "SocialVPN_0.5.0.exe"
-InstallDir "$LOCALAPPDATA\SocialVPN"
+InstallDir "$PROGRAMFILES\SocialVPN"
 
 RequestExecutionLevel admin
 
@@ -18,7 +18,7 @@ RequestExecutionLevel admin
 
 !insertmacro MUI_LANGUAGE "English"
 
-Section "Tap Driver Install" SecTap
+Section "Virtual Network Interface Install" SecTap
 
   SetOutPath "$INSTDIR\driver"
 
@@ -77,7 +77,6 @@ done:
 
 SectionEnd
 
-
 Section "SocialVPN Install" SecSocialVPN
 
   SetOutPath $INSTDIR
@@ -103,6 +102,7 @@ Section "SocialVPN Install" SecSocialVPN
   File "README.txt"
   File "start_socialvpn.cmd"
   File "stop_socialvpn.cmd"
+  File "socialvpn_manager.html"
   File "socialdns.css"
   File "socialdns.html"
   File "socialdns.js"
@@ -115,13 +115,10 @@ Section "SocialVPN Install" SecSocialVPN
   File "SocialVPNService.exe.config"
   File "zlib.net.dll"
 
-SectionEnd
-
-Section "SocialVPN Service Install" SecService
-
   nsExec::ExecToLog '"$SYSDIR\net.exe" stop SocialVPN'
-  nsExec::ExecToLog '"$WINDIR\Microsoft.NET\Framework\v2.0.50727\installutil.exe" /uninstall $INSTDIR\SocialVPNService.exe'
-  nsExec::ExecToLog '"$WINDIR\Microsoft.NET\Framework\v2.0.50727\installutil.exe" $INSTDIR\SocialVPNService.exe'
+  nsExec::ExecToLog '"$WINDIR\Microsoft.NET\Framework\v2.0.50727\installutil.exe" /uninstall "$INSTDIR\SocialVPNService.exe"'
+  nsExec::ExecToLog '"$WINDIR\Microsoft.NET\Framework\v2.0.50727\installutil.exe" "$INSTDIR\SocialVPNService.exe"'
+  nsExec::ExecToLog '"$SYSDIR\net.exe" start SocialVPN'
 
 SectionEnd
 
@@ -131,62 +128,91 @@ Section -post SecPost
 
   SetOutPath "$SMPROGRAMS"
   CreateDirectory "$SMPROGRAMS\SocialVPN"
+  CreateShortCut "$SMPROGRAMS\SocialVPN\Start SocialVPN (run as admin).lnk" "$INSTDIR\start_socialvpn.cmd"
+  CreateShortCut "$SMPROGRAMS\SocialVPN\Stop SocialVPN (run as admin).lnk" "$INSTDIR\stop_socialvpn.cmd"
+  CreateShortCut "$SMPROGRAMS\SocialVPN\SocialVPN Manager.lnk" "$INSTDIR\socialvpn_manager.html"
   CreateShortCut "$SMPROGRAMS\SocialVPN\Uninstall.lnk" "$INSTDIR\Uninstall.exe"
-  CreateShortCut "$SMPROGRAMS\SocialVPN\Start SocialVPN.lnk (Run as admin)" "$INSTDIR\start_socialvpn.cmd"
-  CreateShortCut "$SMPROGRAMS\SocialVPN\Stop SocialVPN.lnk (Run as admin)" "$INSTDIR\stop_socialvpn.cmd"
+
+  CreateShortCut "$DESKTOP\Start SocialVPN (run as admin).lnk" "$INSTDIR\start_socialvpn.cmd"
+  CreateShortCut "$DESKTOP\Stop SocialVPN (run as admin).lnk" "$INSTDIR\stop_socialvpn.cmd"
+  CreateShortCut "$DESKTOP\SocialVPN Manager.lnk" "$INSTDIR\socialvpn_manager.html"
+
+  WriteRegStr HKLM "SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\$(^Name)" DisplayName "$(^Name)"
+  WriteRegStr HKLM "SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\$(^Name)" UninstallString $INSTDIR\Uninstall.exe
+  WriteRegDWORD HKLM "SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\$(^Name)" NoModify 1
+  WriteRegDWORD HKLM "SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\$(^Name)" NoRepair 1
 
 SectionEnd
 
 Section "Uninstall"
 
   nsExec::ExecToLog '"$SYSDIR\net.exe" stop SocialVPN'
-  nsExec::ExecToLog '"$WINDIR\Microsoft.NET\Framework\v2.0.50727\installutil.exe" /uninstall $INSTDIR\SocialVPNService.exe'
+  nsExec::ExecToLog '"$WINDIR\Microsoft.NET\Framework\v2.0.50727\installutil.exe" /uninstall "$INSTDIR\SocialVPNService.exe"'
   nsExec::ExecToLog '"$INSTDIR\driver\driverhelper.exe" remove IpopTap'
 
   Delete "$INSTDIR\driver\driverhelper.exe"
   Delete "$INSTDIR\driver\IpopTap.inf"
   Delete "$INSTDIR\driver\IpopTap.cat"
   Delete "$INSTDIR\driver\IpopTap.sys"
-
-  Delete "$INSTDIR\Uninstall.exe"
   RMDir "$INSTDIR\driver"
 
-  Delete "brunet.config"
-  Delete "Brunet.dll"
-  Delete "Brunet.Security.dll"
-  Delete "Brunet.Services.Coordinate.dll"
-  Delete "Brunet.Services.Dht.dll"
-  Delete "Brunet.Services.XmlRpc.dll"
-  Delete "Brunet.Xmpp.dll"
-  Delete "Changelog.txt"
-  Delete "CookComputing.XmlRpcV2.dll"
-  Delete "ipop.config"
-  Delete "Ipop.Managed.dll"
-  Delete "jabber-net.dll"
-  Delete "jquery.js"
-  Delete "jquery-ui.css"
-  Delete "jquery-ui.js"
-  Delete "LICENSE.txt"
-  Delete "ManagedOpenSsl.dll"
-  Delete "Mono.Security.dll"
-  Delete "NDesk.Options.dll"
-  Delete "README.txt"
-  Delete "socialdns.css"
-  Delete "socialdns.html"
-  Delete "socialdns.js"
-  Delete "socialvpn.css"
-  Delete "SocialVPN.exe"
-  Delete "SocialVPN.exe.config"
-  Delete "socialvpn.html"
-  Delete "socialvpn.js"
-  Delete "SocialVPNService.exe"
-  Delete "SocialVPNService.exe.config"
-  Delete "zlib.net.dll"
+  Delete "$INSTDIR\Uninstall.exe"
+
+  Delete "$INSTDIR\brunet.config"
+  Delete "$INSTDIR\Brunet.dll"
+  Delete "$INSTDIR\Brunet.Security.dll"
+  Delete "$INSTDIR\Brunet.Services.Coordinate.dll"
+  Delete "$INSTDIR\Brunet.Services.Dht.dll"
+  Delete "$INSTDIR\Brunet.Services.XmlRpc.dll"
+  Delete "$INSTDIR\Brunet.Xmpp.dll"
+  Delete "$INSTDIR\Changelog.txt"
+  Delete "$INSTDIR\CookComputing.XmlRpcV2.dll"
+  Delete "$INSTDIR\ipop.config"
+  Delete "$INSTDIR\Ipop.Managed.dll"
+  Delete "$INSTDIR\jabber-net.dll"
+  Delete "$INSTDIR\jquery.js"
+  Delete "$INSTDIR\jquery-ui.css"
+  Delete "$INSTDIR\jquery-ui.js"
+  Delete "$INSTDIR\LICENSE.txt"
+  Delete "$INSTDIR\ManagedOpenSsl.dll"
+  Delete "$INSTDIR\Mono.Security.dll"
+  Delete "$INSTDIR\NDesk.Options.dll"
+  Delete "$INSTDIR\README.txt"
+  Delete "$INSTDIR\start_socialvpn.cmd"
+  Delete "$INSTDIR\stop_socialvpn.cmd"
+  Delete "$INSTDIR\socialvpn_manager.html"
+  Delete "$INSTDIR\socialdns.css"
+  Delete "$INSTDIR\socialdns.html"
+  Delete "$INSTDIR\socialdns.js"
+  Delete "$INSTDIR\socialvpn.css"
+  Delete "$INSTDIR\SocialVPN.exe"
+  Delete "$INSTDIR\SocialVPN.exe.config"
+  Delete "$INSTDIR\socialvpn.html"
+  Delete "$INSTDIR\socialvpn.js"
+  Delete "$INSTDIR\SocialVPNService.exe"
+  Delete "$INSTDIR\SocialVPNService.exe.config"
+  Delete "$INSTDIR\zlib.net.dll"
+  Delete "$INSTDIR\state.xml"
+  Delete "$INSTDIR\sdnsstate.xml"
+  Delete "$INSTDIR\private_key"
+  Delete "$INSTDIR\social.config"
+  Delete "$INSTDIR\Brunet.log"
+  Delete "$INSTDIR\InstallUtil.InstallLog"
+  Delete "$INSTDIR\SocialVPNService.InstallLog"
 
   RMDir "$INSTDIR"
 
+  Delete "$SMPROGRAMS\SocialVPN\Start SocialVPN (run as admin).lnk"
+  Delete "$SMPROGRAMS\SocialVPN\Stop SocialVPN (run as admin).lnk"
+  Delete "$SMPROGRAMS\SocialVPN\SocialVPN Manager.lnk"
   Delete "$SMPROGRAMS\SocialVPN\Uninstall.lnk"
   RMDir "$SMPROGRAMS\SocialVPN"
+
+  Delete "$DESKTOP\Start SocialVPN (run as admin).lnk"
+  Delete "$DESKTOP\Stop SocialVPN (run as admin).lnk"
+  Delete "$DESKTOP\SocialVPN Manager.lnk"
+
+  DeleteRegKey HKLM "SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\$(^Name)"
 
 SectionEnd
 
