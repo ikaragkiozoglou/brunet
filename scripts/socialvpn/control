@@ -1,0 +1,10 @@
+Package: socialvpn
+Priority: optional
+Section: net
+Version: 0.5.0
+Maintainer: Pierre St Juste <ptony82@ufl.edu>
+Architecture: all
+Provides: socialvpn
+Depends: mono-runtime, libmono-corlib2.0-cil, libmono-system2.0-cil, libmono-system-web2.0-cil, libmono-system-runtime2.0-cil, libmono-posix2.0-cil, uml-utilities
+Description: P2P Virtual Private Networking
+  Integrate P2P and social networking to create VPN of friends
