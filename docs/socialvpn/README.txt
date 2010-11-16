@@ -1,17 +1,21 @@
 Instructions
 ============
 
-On Linux
---------
-
-You need to have both mono and tunctl installed.
-
-Run configure.sh, then sudo ./socialvpn
-
-
 On Windows
 ----------
 
-Run install_socialvpn.cmd to install tap device and service
+Install exe package
 
-Run configure.cmd, then start_socialvpn.cmd (right-click and run as administrator)
+Right-click on Start SocialVPN icon on desktop and run as admin (only on Vista and Win7)
+
+Point browser to http://127.0.0.1:58888/
+
+On Debian-based Linux
+---------------------
+
+Install debian packages
+
+sudo socialvpn
+
+Point browser to http://127.0.0.1:58888/
+

@@ -1,5 +1,13 @@
-SocialVPN 0.4.0
-===============
--- Added more options in social.config file such as autologin, autoblock
--- Updated Web UI to make it less confusing
--- Gravatar support
+0.5.0
+=====
+- Installers for windows and Debian-based Linux distros
+- Improved web interface
+- SocialDNS naming support
+- DNS support disabled in Linux
+
+
+0.4.0
+=====
+- Added more options in social.config file such as autologin, autoblock
+- Updated Web UI to make it less confusing
+- Gravatar support
