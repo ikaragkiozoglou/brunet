@@ -39,7 +39,7 @@ namespace WindowsService {
       serviceProcessInstaller.Password = null;
 
       serviceInstaller.DisplayName = "SocialVPN";
-      serviceInstaller.StartType = ServiceStartMode.Manual;
+      serviceInstaller.StartType = ServiceStartMode.Automatic;
 
       serviceInstaller.ServiceName = "SocialVPN";
 
