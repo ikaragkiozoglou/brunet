@@ -81,6 +81,7 @@
         <include name="SocialNode.cs"/>
         <include name="SocialConnectionManager.cs"/>
         <include name="SocialDnsManager.cs"/>
+        <include name="SocialStatsManager.cs"/>
         <include name="SocialUser.cs"/>
         <include name="SocialUtils.cs"/>
         <include name="SocialLog.cs"/>

@@ -93,7 +93,16 @@ namespace Ipop.SocialVPN {
       AppNode.Node.AddConnectionOverlord(_mco);
     }
 
+    public void SetUid(string uid) {
+      SetUid(uid, null);
+    }
+
     public void SetUid(string uid, string pcid) {
+
+      if(_user.Value != null) {
+        return;
+      }
+
       string country = "US";
       string version = "0.4";
       string name = uid;
@@ -157,10 +166,19 @@ namespace Ipop.SocialVPN {
       return _marad.mcast_addr.Contains(AddressParser.Parse(address));
     }
 
+    public string GetStats(string address) {
+      return _marad.GetStats(address);
+    }
+
     public void Close() {
-      Shutdown.Exit();
+      System.Threading.ThreadPool.QueueUserWorkItem(HandleShutdown, this);
       System.Threading.Thread.Sleep(1000);
       Environment.Exit(0);
+    }
+
+    public void HandleShutdown(object state) {
+      IpopNode node = state as IpopNode;
+      node.Shutdown.Exit();
     }
 
     public static new SocialNode CreateNode() {
@@ -180,11 +198,7 @@ namespace Ipop.SocialVPN {
       node_config = Utils.ReadConfig<NodeConfig>(social_config.BrunetConfig);
       ipop_config = Utils.ReadConfig<IpopConfig>(social_config.IpopConfig);
 
-      if(File.Exists(node_config.Security.KeyPath)) {
-        rsa.ImportCspBlob(SocialUtils.ReadFileBytes(
-          node_config.Security.KeyPath));
-      }
-      else if(!File.Exists(node_config.Security.KeyPath) || 
+      if(!File.Exists(node_config.Security.KeyPath) || 
         node_config.NodeAddress == null) {
         node_config.NodeAddress = Utils.GenerateAHAddress().ToString();
         Utils.WriteConfig(social_config.BrunetConfig, node_config);
@@ -192,13 +206,18 @@ namespace Ipop.SocialVPN {
         SocialUtils.WriteToFile(rsa.ExportCspBlob(true), 
           node_config.Security.KeyPath);
       }
+      else if(File.Exists(node_config.Security.KeyPath)) {
+        rsa.ImportCspBlob(SocialUtils.ReadFileBytes(
+          node_config.Security.KeyPath));
+      }
 
       SocialNode node = new SocialNode(node_config, ipop_config, rsa);
 #if !SVPN_NUNIT
       SocialDnsManager sdm = new SocialDnsManager(node);
+      SocialStatsManager ssm = new SocialStatsManager(node);
 
       SocialConnectionManager manager = new SocialConnectionManager(node,
-        node.AppNode.Node.Rpc, sdm);
+        node.AppNode.Node.Rpc, sdm, ssm, social_config);
 
       JabberNetwork jabber = new JabberNetwork(social_config.JabberID, 
         social_config.JabberPass, social_config.JabberHost, 

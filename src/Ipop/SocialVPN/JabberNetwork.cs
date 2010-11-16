@@ -154,7 +154,7 @@ namespace Ipop.SocialVPN {
     }
 
     protected void HandleError(object sender, Exception e) {
-      _message = "Error";
+      _message = e.Message;
     }
 
     protected void HandlePresence(object sender, Presence pres) {

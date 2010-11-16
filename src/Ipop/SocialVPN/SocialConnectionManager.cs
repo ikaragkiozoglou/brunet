@@ -92,8 +92,6 @@ namespace Ipop.SocialVPN {
       Pending
     }
 
-    public const char DELIM = ' ';
- 
     public const string STATEPATH = "state.xml";
 
     public const string RPCID = "SocialRPC";
@@ -107,6 +105,8 @@ namespace Ipop.SocialVPN {
     protected readonly RpcManager _rpc;
 
     protected readonly SocialDnsManager _sdm;
+
+    protected readonly SocialStatsManager _ssm;
 
     protected ImmutableDictionary<string, DateTime> _times;
 
@@ -129,23 +129,28 @@ namespace Ipop.SocialVPN {
     public ImmutableList<string> Blocked { get { return _blocked; }}
 
     public SocialConnectionManager(SocialNode node, RpcManager rpc,
-      SocialDnsManager sdm) {
+      SocialDnsManager sdm, SocialStatsManager ssm, SocialConfig config) {
       _rpc = rpc;
       _rpc.AddHandler(RPCID, this);
       _sdm = sdm;
       _node = node;
+      _ssm = ssm;
       _networks = ImmutableDictionary<string, ISocialNetwork>.Empty;
       _fprs = ImmutableDictionary<string, string>.Empty;
       _times = ImmutableDictionary<string, DateTime>.Empty;
       _pending = ImmutableList<string>.Empty;
       _blocked = ImmutableList<string>.Empty;
       _beat_counter = 0;
-      _auto_allow = false;
+      _auto_allow = config.AutoFriend;
       _sdm.Sender = this;
 #if !SVPN_NUNIT
       _timer = new Timer(TimerHandler, _beat_counter, PERIOD, PERIOD);
       LoadState();
 #endif
+
+      if(config.AutoLogin) {
+        Login("jabber", config.JabberID, config.JabberPass);
+      }
     }
 
     public void Register(string name, ISocialNetwork network) {
@@ -171,7 +176,9 @@ namespace Ipop.SocialVPN {
 
       if (_node.LocalUser == null && (method == String.Empty ||
            method != "setuid")) {
-        throw new Exception("Uid not set");
+        if(method != "login") {
+          throw new Exception("Uid not set");
+        }
       }
 
       if(request.ContainsKey("a") && !request["a"].StartsWith("brunet")) {
@@ -264,12 +271,16 @@ namespace Ipop.SocialVPN {
             result = _sdm.AddTmpMapping((string)args[0], (string)args[1]);
             break;
 
+          case "GetStats":
+            result = _ssm.GetStats();
+            break;
+
           default:
             result = new InvalidOperationException("Invalid Method");
             break;
         }
       } catch (Exception e) {
-        result = e.Message;
+        result = e;
       }
       _rpc.SendResult(req_state, result);
     }
@@ -287,20 +298,30 @@ namespace Ipop.SocialVPN {
     protected void SendRpcMessage(Address addr, string method, 
       string query, bool secure) {
 
-      Console.WriteLine("Query {0} {1}", method, query);
+      DateTime sent = DateTime.Now;
 
 #if !SVPN_NUNIT
       string meth_call = RPCID + "." + method;
       Channel q = new Channel();
       q.CloseAfterEnqueue();
       q.CloseEvent += delegate(object obj, EventArgs eargs) {
-        RpcResult res = (RpcResult) q.Dequeue();
-        string result = (string) res.Result;
+        try {
+          RpcResult res = (RpcResult) q.Dequeue();
+          string result = (string) res.Result;
 
-        Console.WriteLine("Answer {0} {1}", method, result);
+          if(method == "Ping") {
+            DateTime recv = DateTime.Now;
+            _times = _times.InsertIntoNew(result, recv);
+            TimeSpan rtt = recv - sent;
+            _ssm.UpdateLatency(result, rtt.TotalMilliseconds);
+          }
 
-        if(method == "Ping") {
-          _times = _times.InsertIntoNew(result, DateTime.Now);
+          ProtocolLog.WriteIf(SocialLog.SVPNLog,
+            String.Format("RPC {0} {1} {2}", addr.ToString(), method, 
+            query));
+
+        } catch(Exception e) {
+          ProtocolLog.WriteIf(SocialLog.SVPNLog, e.ToString());
         }
       };
 
@@ -316,6 +337,7 @@ namespace Ipop.SocialVPN {
     }
 
     protected void Login(string name, string uid, string password) {
+      _node.SetUid(uid);
       _networks[name].SetData(_node.Address, _node.LocalUser.Fingerprint);
       _networks[name].Login(uid, password);
     }
@@ -501,7 +523,7 @@ namespace Ipop.SocialVPN {
         Utils.WriteConfig(STATEPATH, fstate);
       }
 
-      return SocialUtils.ObjectToXml1<SocialState>(state);
+      return SocialUtils.ObjectToXml<SocialState>(state);
 #endif
     }
 
@@ -523,8 +545,8 @@ namespace Ipop.SocialVPN {
           }
         }
       }
-      catch (Exception e) {
-        Console.WriteLine(e);
+      catch {
+        //Console.WriteLine(e);
       }
 #endif
     }

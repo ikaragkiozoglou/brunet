@@ -95,7 +95,6 @@ function loadStatus() {
     buttons : { "Close" : clearInput}});
 }
 
-
 function loadLogin() {
   var stat = $("Message", prevState).text();
   if(stat.match("Online") != null) {
@@ -122,16 +121,10 @@ function loadSetUid() {
   clearInput();
   var msg;
 
-  var ulabel = "Enter JabberID (ex: example@gmail.com)";
-  var nlabel = "Enter PCID (ex: home-pc)";
-  $("<label/>", { text : ulabel}).appendTo("#inputdiv");
   $("<input/>", { 'type' : "text", 'class' : "input",
     'name' : "uid"}).appendTo("#inputdiv");
-  $("<label/>", { text : nlabel}).appendTo("#inputdiv");
-  $("<input/>", { "type" : "text", 'class' : "input",
-    'name' : "pcid"}).appendTo("#inputdiv");
 
-  msg = "Provide your Jabber ID and a name for your PC below";
+  msg = "Enter your JabberID (ex. user@gmail.com)";
   $("#inputdiv").dialog({ modal : true, title : msg, width : 700,
     buttons : { "Submit" : doSetUid, "Cancel" : clearInput}});
 }
@@ -179,13 +172,14 @@ function doLogin() {
   $.ajax({type: "POST", url: "state.xml", data : "m=" + method + 
     "&n=" + network + "&u=" + user + "&p=" + pass, 
     success: processState});
+  refresh = 1
   clearInput();
 }
 
 function doSetUid() {
   var method = "setuid";
   var uid = encodeURIComponent($(":input[name=uid]").val());
-  var pcid = encodeURIComponent($(":input[name=pcid]").val());
+  var pcid = "";
   $.ajax({type: "POST", url: "state.xml", data : "m=" + method + 
     "&u=" + uid + "&p=" + pcid, success: processState});
   refresh = 1;
