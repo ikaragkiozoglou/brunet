@@ -83,6 +83,12 @@ namespace Ipop.Managed {
     /// <summary>Array list of multicast addresses</summary>
     public readonly List<Address> mcast_addr;
 
+    /// <summary>Keeps track of number of sent packets</summary>
+    protected readonly Dictionary<Address, int> _tx_counters;
+
+    /// <summary>Keeps track of number or received packets</summary>
+    protected readonly Dictionary<Address, int> _rx_counters;
+
     /// <summary>Synchronization object</summary>
     protected readonly object _sync;
 
@@ -110,6 +116,8 @@ namespace Ipop.Managed {
       _addr_ip = new Dictionary<Address, MemBlock>();
       _blocked_addrs = new Dictionary<Address, MemBlock>();
       mcast_addr = new List<Address>();
+      _tx_counters = new Dictionary<Address, int>();
+      _rx_counters = new Dictionary<Address, int>();
 
       _dhcp = dhcp;
       _local_ip = local_ip;
@@ -120,6 +128,34 @@ namespace Ipop.Managed {
         new SsdpTranslator(local_ip)
       };
       _resolver = new WriteOnce<IDnsResolver>();
+    }
+
+    protected void UpdateCounter(Dictionary<Address, int> counters, 
+      Address addr) {
+
+      if(addr == null) {
+        return;
+      }
+
+      int counter;
+      if(counters.TryGetValue(addr, out counter)) {
+        counter++;
+        counters[addr] = counter;
+      }
+      else {
+        counters.Add(addr, 1);
+      }
+    }
+
+    public string GetStats(string address) {
+      Address addr = AddressParser.Parse(address);
+      int rx_counter = 0;
+      int tx_counter = 0;
+
+      _tx_counters.TryGetValue(addr, out tx_counter);
+      _rx_counters.TryGetValue(addr, out rx_counter);
+
+      return rx_counter + " " + tx_counter;
     }
 
     // Return string of localIP
@@ -162,6 +198,7 @@ namespace Ipop.Managed {
     <returns>The translated IP Packet.</returns>
     */
     public MemBlock Translate(MemBlock packet, Address from) {
+      UpdateCounter(_rx_counters, from);
       MemBlock source_ip = _addr_ip[from];
       if(source_ip == null) {
         throw new Exception("Invalid mapping " + from + ".");
@@ -213,7 +250,9 @@ namespace Ipop.Managed {
     /// <param name="IP">A MemBlock of the IP</param>
     /// <returns>A brunet Address for the IP</returns>
     public Address Resolve(MemBlock IP) {
-      return _ip_addr[IP];
+      Address to = _ip_addr[IP];
+      UpdateCounter(_tx_counters, to);
+      return to;
     }
 
     public bool Check(MemBlock ip, Address addr) {
