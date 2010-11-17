@@ -2,7 +2,7 @@
 !include "MUI2.nsh"
 
 Name "SocialVPN 0.5.0"
-Outfile "SocialVPN_0.5.0.exe"
+Outfile "socialvpn_0.5.0.exe"
 InstallDir "$PROGRAMFILES\SocialVPN"
 
 RequestExecutionLevel admin
