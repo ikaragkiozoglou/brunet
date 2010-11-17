@@ -263,6 +263,7 @@ function processState(state) {
 }
 
 function parseUser(user) {
+  user = $(user);
   user.uid = $("Uid", user).text();
   user.pcid = $("PCID", user).text();
   user.img = $("Pic", user).text();

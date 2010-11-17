@@ -8,12 +8,10 @@
   <property name="docs.dir" value="../../../docs/socialvpn"/>
   <property name="scripts.dir" value="../../../scripts/socialvpn"/>
   <property name="web.dir" value="web"/>
-  <property name="release.dir" value="socialvpn_0.4.1"/>
+  <property name="release" value="socialvpn_0.5.0"/>
 
   <target name="clean" description="Remove build directory">
     <delete dir="${build.dir}" failonerror="true"/>
-    <delete dir="${release.dir}" failonerror="true"/>
-    <delete file="${release.dir}.zip" failonerror="true"/>
   </target>
 
   <target name="build" description="Build SocialVPN.exe">
@@ -65,13 +63,19 @@
 
     <copy todir="${build.dir}" failonerror="true">
       <fileset basedir="${docs.dir}">
-        <include name="*" />
+        <include name="Changelog.txt" />
+        <include name="LICENSE.txt" />
+        <include name="README.txt" />
       </fileset>
     </copy>
 
     <copy todir="${build.dir}" failonerror="true">
       <fileset basedir="${scripts.dir}">
-        <include name="*" />
+        <include name="socialvpn" />
+        <include name="socialvpn_manager.html" />
+        <include name="socialvpn.nsi" />
+        <include name="start_socialvpn.cmd" />
+        <include name="stop_socialvpn.cmd" />
       </fileset>
     </copy>
 
@@ -132,23 +136,65 @@
     </csc>
   </target>
 
-  <target name="release" description="Create release">
-  
-    <mkdir dir="${release.dir}" failonerror="true"/>
+  <target name="release" depends="build" description="Create release">
 
-    <copy todir="${release.dir}" failonerror="true">
+    <exec program="cp" failonerror="false">
+      <arg line="-r ${drivers.dir} ${build.dir}"/>
+    </exec>
+
+    <exec program="cp" failonerror="false">
+      <arg line="-r ${scripts.dir}/socialvpn_deb ${build.dir}/${release}"/>
+    </exec>
+
+    <copy todir="${build.dir}/${release}/opt/socialvpn" failonerror="true">
       <fileset basedir="${build.dir}">
-        <include name="*" />
+        <include name="Brunet.dll" />
+        <include name="Brunet.Security.dll"/>
+        <include name="Brunet.Services.Coordinate.dll"/>
+        <include name="Brunet.Services.Dht.dll" />
+        <include name="Brunet.Services.XmlRpc.dll" />
+        <include name="Brunet.Xmpp.dll"/>
+        <include name="CookComputing.XmlRpcV2.dll" />
+        <include name="jabber-net.dll"/>
+        <include name="zlib.net.dll"/>
+        <include name="ManagedOpenSsl.dll"/>
+        <include name="Mono.Security.dll"/>
+        <include name="NDesk.Options.dll"/>
+        <include name="Ipop.Managed.dll"/>
+        <include name="SocialVPN.exe"/>
+        <include name="SocialVPNService.exe"/>
+        <include name="svpncmd.exe"/>
+        <include name="socialvpn.js" />
+        <include name="socialvpn.css" />
+        <include name="socialvpn.html" />
+        <include name="socialdns.js" />
+        <include name="socialdns.css" />
+        <include name="socialdns.html" />
+        <include name="jquery.js" />
+        <include name="jquery-ui.js" />
+        <include name="jquery-ui.css" />
+        <include name="brunet.config" />
+        <include name="ipop.config" />
+        <include name="SocialVPN.exe.config" />
+        <include name="SocialVPNService.exe.config" />
+        <include name="Changelog.txt" />
+        <include name="LICENSE.txt" />
+        <include name="README.txt" />
+        <include name="socialvpn" />
+        <include name="socialvpn_manager.html" />
+        <include name="socialvpn.nsi" />
+        <include name="start_socialvpn.cmd" />
+        <include name="stop_socialvpn.cmd" />
       </fileset>
     </copy>
 
-    <exec program="cp" failonerror="false">
-      <arg line="-r ${drivers.dir} ${release.dir}"/>
-    </exec>
+   <exec program="makensis" failonerror="false">
+     <arg line="${build.dir}/socialvpn.nsi"/>
+   </exec> 
 
-    <exec program="zip" failonerror="false">
-      <arg line="-r ${release.dir}.zip ${release.dir}"/>
-    </exec>
+   <exec program="dpkg-deb" failonerror="false">
+     <arg line="-b ${build.dir}/${release}"/>
+   </exec> 
 
   </target>
 
