@@ -25,3 +25,6 @@ fi
 /sbin/dhclient -1 -pf $pid_file -lf /var/lib/dhcp3/dhclient.$device.leases $device
 
 echo "Point your browser to http://127.0.0.1:58888"
+
+/usr/bin/www-browser "http://127.0.0.1:58888"
+
