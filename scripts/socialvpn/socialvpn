@@ -26,5 +26,3 @@ fi
 
 echo "Point your browser to http://127.0.0.1:58888"
 
-/usr/bin/www-browser "http://127.0.0.1:58888"
-

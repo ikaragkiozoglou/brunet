@@ -107,7 +107,11 @@ namespace Ipop.SocialVPN {
 
         if (request.RawUrl.StartsWith("/state.xml?")) {
           string getData = request.RawUrl.Substring(11);
-          responseString = Process(SocialUtils.DecodeUrl(getData));
+          try {
+            responseString = Process(SocialUtils.DecodeUrl(getData));
+          } catch (Exception e) {
+            responseString = e.Message;
+          }
         }
         else if (request.RawUrl == "/state.xml") {
           StreamReader reader = new StreamReader(request.InputStream,
@@ -116,7 +120,11 @@ namespace Ipop.SocialVPN {
           string postData = reader.ReadToEnd();
           request.InputStream.Close();
           reader.Close();
-          responseString = Process(SocialUtils.DecodeUrl(postData));
+          try {
+            responseString = Process(SocialUtils.DecodeUrl(postData));
+          } catch (Exception e) {
+            responseString = e.Message;
+          }
         }
         else if (request.RawUrl == "/socialvpn.js") {
           using (StreamReader text = new StreamReader("socialvpn.js")) {
