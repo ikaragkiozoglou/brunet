@@ -148,9 +148,6 @@ namespace Ipop.SocialVPN {
       LoadState();
 #endif
 
-      if(config.AutoLogin) {
-        Login("jabber", config.JabberID, config.JabberPass);
-      }
     }
 
     public void Register(string name, ISocialNetwork network) {
@@ -336,13 +333,13 @@ namespace Ipop.SocialVPN {
 #endif
     }
 
-    protected void Login(string name, string uid, string password) {
+    public void Login(string name, string uid, string password) {
       _node.SetUid(uid);
       _networks[name].SetData(_node.Address, _node.LocalUser.Fingerprint);
       _networks[name].Login(uid, password);
     }
 
-    protected void Logout(string name) {
+    public void Logout(string name) {
       _networks[name].Logout();
     }
 
@@ -358,7 +355,7 @@ namespace Ipop.SocialVPN {
       }
     }
 
-    protected bool IsVerified(SocialUser user) {
+    public bool IsVerified(SocialUser user) {
       string fpr;
       if(_fprs.TryGetValue(user.Address, out fpr)) {
         if(user.Fingerprint == fpr) {
@@ -368,7 +365,7 @@ namespace Ipop.SocialVPN {
       return false;
     }
 
-    protected bool IsOffline(string address) {
+    public bool IsOffline(string address) {
       if(!_times.ContainsKey(address)) {
         return true;
       }
