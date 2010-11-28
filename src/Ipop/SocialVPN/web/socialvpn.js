@@ -48,11 +48,15 @@ function loadPage() {
 function loadHeader() {
   $("<h1/>", {text : 'SocialVPN'}).appendTo("#subheader");
   var menu = $("<ul/>").appendTo("#subheader");
-  menu.append($("<li/>", {text : 'Add Friend', click : loadAdd}));
+  menu.append($("<li/>", {text : 'Add', click : loadAdd}));
   menu.append($("<li/>", {text : 'Login', 'id' : "login", 
     click : loadLogin}));
   menu.append($("<li/>", {text : 'Shutdown', 'id' : "shutdown", 
     click : doShutdown}));
+}
+
+function doAddTest() {
+  window.location = "http://www.acis.ufl.edu/~ptony82/t/s.html";
 }
 
 function loadNav() {
@@ -124,7 +128,7 @@ function loadSetUid() {
   $("<input/>", { 'type' : "text", 'class' : "input",
     'name' : "uid"}).appendTo("#inputdiv");
 
-  msg = "Enter your JabberID (ex. user@gmail.com)";
+  msg = "Enter your XMPP ID (ex. user@gmail.com)";
   $("#inputdiv").dialog({ modal : true, title : msg, width : 700,
     buttons : { "Submit" : doSetUid, "Cancel" : clearInput}});
 }
@@ -134,7 +138,11 @@ function loadAdd() {
   var user = parseUser($("LocalUser", prevState));
   var msg;
 
-  msg = "Enter your friend's P2P address";
+  msg = "You can test SocialVPN by connecting to our test server, \
+         click on Add Test Server button below";
+  $("<p/>", { text: msg, "class" : "inbold"}).appendTo("#inputdiv");
+
+  msg = "or connect to a friend by entering his/her P2P address:";
   $("<p/>", { text: msg}).appendTo("#inputdiv");
   $("<input/>", { "class" : "input", 
     "name" : "address"}).appendTo("#inputdiv");
@@ -153,11 +161,11 @@ function loadAdd() {
   msg = "- Thank you";
   $("<p/>", { text: msg}).appendTo("#inputdiv");
 
-  msg = "By logging in XMPP friends are added automatically, but you\
-         can also add friends manually";
+  msg = "Add friends manually without XMPP";
 
   $("#inputdiv").dialog({ modal : true, title : msg, width : 700,
-    buttons : { "Add Friend" : doAdd, "Cancel" : clearInput}});
+    buttons : { "Add Friend" : doAdd, "Add Test Server" : doAddTest,
+    "Cancel" : clearInput}});
 }
 
 function getState() {
