@@ -93,6 +93,7 @@
         <include name="HttpInterface.cs"/>
         <include name="AssemblyInfo.cs"/>
         <include name="JabberNetwork.cs"/>
+        <include name="TestNetwork.cs"/>
         <include name="ISocialNetwork.cs"/>
       </sources>
       <references basedir="${build.dir}">
@@ -205,6 +206,7 @@
         <include name="SocialNode.cs"/>
         <include name="SocialConnectionManager.cs"/>
         <include name="SocialDnsManager.cs"/>
+        <include name="SocialStatsManager.cs"/>
         <include name="SocialUser.cs"/>
         <include name="SocialUtils.cs"/>
         <include name="SocialLog.cs"/>
@@ -212,6 +214,7 @@
         <include name="HttpInterface.cs"/>
         <include name="AssemblyInfo.cs"/>
         <include name="JabberNetwork.cs"/>
+        <include name="TestNetwork.cs"/>
         <include name="ISocialNetwork.cs"/>
       </sources>
       <references basedir="${build.dir}">

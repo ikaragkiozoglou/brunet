@@ -86,6 +86,9 @@ SectionEnd
 Section "SocialVPN Install" SecSocialVPN
 
   SetOutPath $INSTDIR
+
+  nsExec::ExecToLog '"$SYSDIR\net.exe" stop SocialVPN'
+
   File "brunet.config"
   File "Brunet.dll"
   File "Brunet.Security.dll"
@@ -121,7 +124,6 @@ Section "SocialVPN Install" SecSocialVPN
   File "SocialVPNService.exe.config"
   File "zlib.net.dll"
 
-  nsExec::ExecToLog '"$SYSDIR\net.exe" stop SocialVPN'
   nsExec::ExecToLog '"$WINDIR\Microsoft.NET\Framework\v2.0.50727\installutil.exe" /uninstall "$INSTDIR\SocialVPNService.exe"'
   nsExec::ExecToLog '"$WINDIR\Microsoft.NET\Framework\v2.0.50727\installutil.exe" "$INSTDIR\SocialVPNService.exe"'
   nsExec::ExecToLog '"$SYSDIR\net.exe" start SocialVPN'

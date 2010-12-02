@@ -226,53 +226,6 @@ namespace Ipop.SocialVPN {
   public class JabberNetworkTester {
     [Test]
     public void JabberNetworkTest() {
-      string uid = "ptony82@ufl.edu";
-      string password = "password";
-      string host = "host";
-      string port = "5222";
-      string fpr = "fingerprint";
-      string address = "adddress";
-      JabberNetwork network = new JabberNetwork(uid, password, host, port,
-        fpr, address);
-
-      Random rand = new Random();
-      XmlDocument doc = new XmlDocument();
-
-      string fpr1 = rand.NextDouble().ToString();
-      string addr1 = rand.NextDouble().ToString();
-      string data1 = fpr1 + JabberNetwork.DELIM + addr1 +
-        JabberNetwork.DELIM + JabberNetwork.PacketTypes.Request.ToString();
-
-      string fpr2 = rand.NextDouble().ToString();
-      string addr2 = rand.NextDouble().ToString();
-      string data2 = fpr2 + JabberNetwork.DELIM + addr2 +
-        JabberNetwork.DELIM + JabberNetwork.PacketTypes.Reply.ToString();
-
-      JID from = new JID("ptony82@ufl.edu");
-      SvpnMsg msg1 = new SvpnMsg(doc, data1);
-      SvpnMsg msg2 = new SvpnMsg(doc, data2);
-      string jid = from.User + "@" + from.Server;
-
-      network.HandleSvpnMsg(msg1, from);
-
-      Assert.AreEqual(network.Addresses[addr1], jid);
-      Assert.AreEqual(network.Fingerprints[addr1], fpr1);
-      
-      network.HandleSvpnMsg(msg1, from);
-
-      Assert.AreEqual(network.Addresses[addr1], jid);
-      Assert.AreEqual(network.Fingerprints[addr1], fpr1);
-      
-      network.HandleSvpnMsg(msg2, from);
-
-      Assert.AreEqual(network.Addresses[addr2], jid);
-      Assert.AreEqual(network.Fingerprints[addr2], fpr2);
-
-      network.HandleSvpnMsg(msg2, from);
-
-      Assert.AreEqual(network.Addresses[addr2], jid);
-      Assert.AreEqual(network.Fingerprints[addr2], fpr2);
-      
 
     }
   } 

@@ -223,7 +223,10 @@ namespace Ipop.SocialVPN {
         social_config.JabberPass, social_config.JabberHost, 
         social_config.JabberPort);
 
+      TestNetwork test = new TestNetwork();
+
       manager.Register("jabber", jabber);
+      manager.Register("test", test);
 
       if(social_config.AutoLogin) {
         manager.Login("jabber", social_config.JabberID, 

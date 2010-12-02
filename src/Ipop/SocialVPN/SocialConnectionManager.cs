@@ -183,7 +183,7 @@ namespace Ipop.SocialVPN {
       }
       switch(method) {
         case "add":
-          SendCertRequest(request["a"], true);
+          AddToPending(request["a"]);
           if(request.ContainsKey("f")) {
             _fprs = _fprs.InsertIntoNew(request["a"], request["f"]);
           }
@@ -215,6 +215,10 @@ namespace Ipop.SocialVPN {
 
         case "shutdown":
           _node.Close();
+          break;
+
+        case "autofriend":
+          _auto_allow = (_auto_allow ^ true);
           break;
 
         case "sdns.search":
@@ -337,13 +341,14 @@ namespace Ipop.SocialVPN {
       _node.SetUid(uid);
       _networks[name].SetData(_node.Address, _node.LocalUser.Fingerprint);
       _networks[name].Login(uid, password);
+      GetPending();
     }
 
     public void Logout(string name) {
       _networks[name].Logout();
     }
 
-    public void AddFriend(string address, string cert) {
+    protected void AddFriend(string address, string cert) {
       SocialUser user = _node.AddFriend(address, cert, null, null);
 
       if(_pending.Contains(user.Address)) {
@@ -355,7 +360,7 @@ namespace Ipop.SocialVPN {
       }
     }
 
-    public bool IsVerified(SocialUser user) {
+    protected bool IsVerified(SocialUser user) {
       string fpr;
       if(_fprs.TryGetValue(user.Address, out fpr)) {
         if(user.Fingerprint == fpr) {
@@ -365,7 +370,7 @@ namespace Ipop.SocialVPN {
       return false;
     }
 
-    public bool IsOffline(string address) {
+    protected bool IsOffline(string address) {
       if(!_times.ContainsKey(address)) {
         return true;
       }
@@ -378,12 +383,12 @@ namespace Ipop.SocialVPN {
       return false;
     }
 
-    public void Block(string address) {
+    protected void Block(string address) {
       _node.Block(address);
       _blocked = _blocked.PushIntoNew(address);
     }
 
-    public void Unblock(string address) {
+    protected void Unblock(string address) {
       _node.Unblock(address);
       _blocked = _blocked.RemoveFromNew(address);
     }
@@ -396,8 +401,13 @@ namespace Ipop.SocialVPN {
       }
     }
 
-    public void VerifyFriends() {
+    protected void VerifyFriends() {
       foreach(SocialUser user in _node.Friends.Values) {
+
+        if(_pending.Contains(user.Address)) {
+          _pending = _pending.RemoveFromNew(user.Address);
+        }
+
         if(!_node.IsAllowed(user.Address) && 
           !_blocked.Contains(user.Address)) {
           foreach(ISocialNetwork network in _networks.Values) {
@@ -417,14 +427,21 @@ namespace Ipop.SocialVPN {
       }
     }
 
-    public void GetPending() {
+    protected void AddToPending(string address) {
+      if(!_node.Friends.ContainsKey(address) && address != _node.Address &&
+        !_pending.Contains(address)) {
+        _pending = _pending.PushIntoNew(address);
+      }
+    }
+
+    protected void GetPending() {
       foreach (ISocialNetwork network in _networks.Values) {
         foreach(KeyValuePair<string, string> kvp in network.Addresses) {
-          SendCertRequest(kvp.Key, false);
+          AddToPending(kvp.Key);
         }
       }
       foreach(string address in _pending) {
-        SendCertRequest(address, false);
+        SendCertRequest(address);
       }
     }
 
@@ -439,14 +456,9 @@ namespace Ipop.SocialVPN {
       }
     }
 
-    protected void SendCertRequest(string address, bool add_pending) {
+    protected void SendCertRequest(string address) {
       string request = _node.LocalUser.Certificate;
-      if(!_node.Friends.ContainsKey(address) &&  address != _node.Address) {
-        SendRpcMessage(address, "AddCertRequest", request, false);
-        if(!_pending.Contains(address) && add_pending) {
-          _pending = _pending.PushIntoNew(address);
-        }
-      }
+      SendRpcMessage(address, "AddCertRequest", request, false);
     }
 
     protected string AddCertRequest(string address, string msg) {
@@ -537,7 +549,7 @@ namespace Ipop.SocialVPN {
           SocialUser user = new SocialUser(friend.Certificate, friend.IP, 
             friend.Status);
           _node.AddFriend(user.Address, user.Certificate, user.Uid, user.IP);
-          if(user.Status == StatusTypes.Blocked.ToString()) {
+          if(user.Status == StatusTypes.Blocked.ToString() && !_auto_allow) {
             _node.Block(user.Address);
           }
         }

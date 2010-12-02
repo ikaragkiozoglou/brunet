@@ -22,6 +22,7 @@ THE SOFTWARE.
 
 var prevState = "";
 var refresh = 1;
+var uid = "";
 
 $(document).ready(init);
 
@@ -53,10 +54,6 @@ function loadHeader() {
     click : loadLogin}));
   menu.append($("<li/>", {text : 'Shutdown', 'id' : "shutdown", 
     click : doShutdown}));
-}
-
-function doAddTest() {
-  window.location = "http://www.acis.ufl.edu/~ptony82/t/s.html";
 }
 
 function loadNav() {
@@ -161,7 +158,7 @@ function loadAdd() {
   msg = "- Thank you";
   $("<p/>", { text: msg}).appendTo("#inputdiv");
 
-  msg = "Add friends manually without XMPP";
+  msg = "Add friends manually without logging into XMPP";
 
   $("#inputdiv").dialog({ modal : true, title : msg, width : 700,
     buttons : { "Add Friend" : doAdd, "Add Test Server" : doAddTest,
@@ -169,7 +166,23 @@ function loadAdd() {
 }
 
 function getState() {
+  if(refresh == 0) {
+    return;
+  }
+
   $.ajax({type: "GET", url: "state.xml", success: processState});
+}
+
+function doAddTest() {
+  var method = "login";
+  var network = "test";
+  var user = uid;
+  var pass = "nopub";
+  $.ajax({type: "POST", url: "state.xml", data : "m=" + method + 
+    "&n=" + network + "&u=" + user + "&p=" + pass, 
+    success: processState});
+  refresh = 1
+  clearInput();
 }
 
 function doLogin() {
@@ -280,6 +293,7 @@ function parseUser(user) {
   user.fpr = $("Fingerprint", user).text();
   user.alias = $("Alias", user).text();
   user.status = $("Status", user).text();
+  uid = user.uid;
   return user;
 }
 

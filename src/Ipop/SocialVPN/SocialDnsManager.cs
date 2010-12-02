@@ -74,6 +74,7 @@ namespace Ipop.SocialVPN {
       _tmappings = ImmutableDictionary<string, DnsMapping>.Empty;
       _sender = new WriteOnce<IRpcSender>();
       LoadState();
+      AddDnsMapping(System.Net.Dns.GetHostName());
     }
 
     protected string GetAddress(string ip) {
@@ -107,7 +108,7 @@ namespace Ipop.SocialVPN {
         return friend.IP;
       }
       else {
-        throw new Exception("Invalid Address");
+        throw new Exception("IP address not found");
       }
 #endif
     }
@@ -124,6 +125,10 @@ namespace Ipop.SocialVPN {
         throw new Exception("Invalid Address");
       }
 #endif
+    }
+
+    public DnsMapping AddDnsMapping(string alias) {
+      return AddDnsMapping(alias, null);
     }
 
     public DnsMapping AddDnsMapping(string alias, string ip) {
@@ -410,62 +415,6 @@ namespace Ipop.SocialVPN {
 
     [Test]
     public void SocialDnsManagerTest() {
-      byte[] certData = SocialUtils.ReadFileBytes("local.cert");
-      string certb64 = Convert.ToBase64String(certData);
-      SocialUser user = new SocialUser(certb64);
-
-      ImmutableDictionary<string, SocialUser> friends =
-        ImmutableDictionary<string, SocialUser>.Empty;
-
-      Mockery mocks = new Mockery();
-      ISocialNode node = mocks.NewMock<ISocialNode>();
-      IRpcSender sender = mocks.NewMock<IRpcSender>();
-
-      Stub.On(node).GetProperty("Friends").Will(
-        Return.Value(friends));
-
-      Stub.On(node).GetProperty("LocalUser").Will(
-        Return.Value(user));
-
-      Stub.On(node).Method("IsAllowed").Will(
-       Return.Value(true));
-
-      Stub.On(sender).Method("SendRpcMessage");
-
-      SocialDnsManager sdm = new SocialDnsManager(node);
-      sdm.Sender = sender;
-
-      sdm.AddDnsMapping("pierre", "172.31.21.1");
-
-      Assert.AreEqual(sdm.Mappings["pierre.sdns"].Address, 
-        "address172.31.21.1");
-
-      sdm.SearchMapping("address", "pierre", sender);
-
-      DnsMapping mapping = new DnsMapping("pierre", "brunet123", "ip", 
-        "source");
-      DnsMapping mapping1 = new DnsMapping("pierre", "brunet124", "ip", 
-        "source2");
-      DnsMapping mapping2 = new DnsMapping("pierre", "brunet124", "ip", 
-        "source3");
-
-      sdm.AddTmpMapping("address", mapping.ToString());
-      sdm.AddTmpMapping("address1", mapping1.ToString());
-      sdm.AddTmpMapping("address2", mapping2.ToString());
-
-      Assert.AreEqual(3, sdm.Tmappings.Values.Count);
-
-      List<DnsMapping> list = sdm.SearchLocalCache("pierre", false, false);
-      Assert.AreEqual(list[0].Address, "brunet124");
-      Assert.AreEqual(list[0].Rating, 2);
-      Assert.AreEqual(list[1].Rating, 1);
-      Assert.AreEqual(list.Count, 2);
-
-      List<DnsMapping> list1 = sdm.SearchLocalCache("pierre.sdns", true, false);
-      Assert.AreEqual(list1.Count, 2);
-      Assert.AreEqual(list1[0].Rating, 2);
-
-      Console.WriteLine(sdm.GetState(""));
     }
   } 
 #endif
