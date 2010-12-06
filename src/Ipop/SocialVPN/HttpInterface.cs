@@ -92,11 +92,10 @@ namespace Ipop.SocialVPN {
 
         try {
           context = _listener.GetContext();
-        } catch(HttpListenerException e) {
-          if(!_running) {
-            return;
-          }
+        } catch(Exception e) {
           Console.WriteLine(e);
+          ProtocolLog.WriteIf(SocialLog.SVPNLog,
+            String.Format("SVPN Exception: {0}", e));
         }
 
         HttpListenerRequest request = context.Request;
@@ -189,8 +188,14 @@ namespace Ipop.SocialVPN {
         response.ContentLength64 = buffer.Length;
         response.AddHeader("Cache-Control", "No-cache");
         System.IO.Stream output = response.OutputStream;
-        output.Write(buffer, 0, buffer.Length);
-        output.Close();
+        try {
+          output.Write(buffer, 0, buffer.Length);
+          output.Close();
+        } catch (Exception e) {
+          Console.WriteLine(e);
+          ProtocolLog.WriteIf(SocialLog.SVPNLog,
+            String.Format("SVPN Exception: {0}", e));
+        }
       }
     }
   }

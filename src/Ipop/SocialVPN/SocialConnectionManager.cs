@@ -169,6 +169,8 @@ namespace Ipop.SocialVPN {
       string method = String.Empty;
       if (request.ContainsKey("m")) {
         method = request["m"];
+        ProtocolLog.WriteIf(SocialLog.SVPNLog,
+          String.Format("SVPN Method Call {0}", method));
       }
 
       if (_node.LocalUser == null && (method == String.Empty ||
@@ -555,7 +557,6 @@ namespace Ipop.SocialVPN {
         }
       }
       catch {
-        //Console.WriteLine(e);
       }
 #endif
     }

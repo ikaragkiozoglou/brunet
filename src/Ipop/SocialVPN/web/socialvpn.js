@@ -23,6 +23,7 @@ THE SOFTWARE.
 var prevState = "";
 var refresh = 1;
 var uid = "";
+var statusMsg = ""
 
 $(document).ready(init);
 
@@ -181,8 +182,9 @@ function doAddTest() {
   $.ajax({type: "POST", url: "state.xml", data : "m=" + method + 
     "&n=" + network + "&u=" + user + "&p=" + pass, 
     success: processState});
-  refresh = 1
+  refresh = 1;
   clearInput();
+  setMessage("looking up test servers");
 }
 
 function doLogin() {
@@ -218,6 +220,8 @@ function doShutdown() {
   var method = "shutdown";
   $.ajax({type: "POST", url: "state.xml", data : "m=" + method,
     success: processState});
+  $('body').html("<h3>SocialVPN is now shutdown, you can restart by clicking \
+  on Start SocialVPN icon on your desktop<h3>");
 }
 
 function doAdd() {
@@ -298,6 +302,7 @@ function parseUser(user) {
 }
 
 function parsePending(user) {
+  user = $(user);
   user.address = $(user).text().substring(12);
   user.status = "Pending";
   user.img = "http://www.gravatar.com/avatar/?d=mm";
@@ -326,16 +331,20 @@ function processUser(state) {
 
   $("<br/>").appendTo("#usersubdiv");
 
-  var stat = $("Message", prevState).text();
-  var msg = "XMPP Status: " + stat;
-  $("<p/>", {text : msg}).appendTo("#usersubdiv");
+  statusMsg = $("NetworkState > Message", prevState).text();
+  var msg = "Status: " + statusMsg;
+  $("<p/>", {text : msg, id: 'statusMsg'}).appendTo("#usersubdiv");
 
-  if(stat.match("Online") != null) {
+  if(statusMsg.match("Online") != null) {
     $("#login").text("Logout");
   }
   else {
     $("#login").text("Login");
   }
+}
+
+function setMessage(msg) {
+  $("#statusMsg").text("Status: ..." + msg + "...");
 }
 
 function loadFriends(state) {
@@ -344,7 +353,7 @@ function loadFriends(state) {
   $("SocialUser",state).each(function() { addOnline(parseUser(this)); });
   $("SocialUser",state).each(function() { addOffline(parseUser(this)); });
   $("SocialUser",state).each(function() { addBlocked(parseUser(this)); });
-  $("string",state).each(function() {
+  $("Pending > string",state).each(function() {
     addFriend(parsePending(this)); });
 }
 

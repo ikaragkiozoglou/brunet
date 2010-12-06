@@ -81,13 +81,18 @@ namespace Ipop.SocialVPN {
       string url = URL + "/";
       string result = SocialUtils.Request(url);
 
+      int counter = 0;
+
       string[] lines = result.Split('\n');
       foreach(string line in lines) {
         if(line.Length < 10) continue;
         string[] parts = line.Split(' ');
         _fingerprints = _fingerprints.InsertIntoNew(parts[0], parts[1]);
         _addresses = _addresses.InsertIntoNew(parts[0], parts[2]);
+        counter++;
       }
+
+      _message = " >> Found " + counter + " test server(s)";
     }
 
     public void Login(string uid, string password) {

@@ -61,6 +61,7 @@ function loadSearch() {
 }
 
 function parseResult(result) {
+  result = $(result);
   result.alias = $("Alias", result).text();
   result.ip = $("IP", result).text();
   result.address = $("Address", result).text();
