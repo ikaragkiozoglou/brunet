@@ -39,30 +39,41 @@ namespace Brunet.Connections
 
     public Address RemoteAddress { get { return Connection.Address; } }
     public ConnectionType ConnectionType { get { return Connection.MainType; } }
-    public Edge Edge { get { return Connection.Edge; } }
     
     /**
      * This is the ConnectionList that the Connection was
      * inserted into.
      */
-    public readonly ConnectionList CList;
+    public ConnectionList CList {
+      get { return NewState.GetConnections(Connection.MainType); }
+    }
     /**
      * The new Connection
      */ 
     public readonly Connection Connection;
+    ///ConnectionState at the time of the event
+    public readonly ConnectionState ConnectionState;
+    /// State of the ConnectionTable just before the event
+    public readonly ConnectionTableState OldState;
+    /// State of the ConnectionTable just after the event
+    public readonly ConnectionTableState NewState;
     /**
      * The index into CList that corresponds to CList
      */
     public readonly int Index;
     /** Sequence number to compare order of changes
      */
-    public readonly int View;
+    public int View { 
+      get { return NewState.View; }
+    }
 
-    public ConnectionEventArgs(Connection c, int idx, ConnectionList cl, int view) {
+    public ConnectionEventArgs(Connection c, ConnectionState cs, int idx,
+                               ConnectionTableState old, ConnectionTableState news) {
       Connection = c;
+      ConnectionState = cs;
       Index = idx;
-      CList = cl;
-      View = view;
+      OldState = old;
+      NewState = news;
     }
 
     public IDictionary ToDictionary() {

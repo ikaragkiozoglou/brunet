@@ -37,12 +37,14 @@ using System.Xml;
 using System.Text;
 using System.Threading;
 using Brunet.Util;
-using Brunet.Collections;
-using Brunet.Transport;
-
-using Brunet.Messaging;
-using Brunet.Symphony;
 using Brunet.Concurrent;
+using Brunet.Collections;
+using Brunet.Messaging;
+using Brunet.Transport;
+//This is violation of the modularization hierarchy and needs to be fixed:
+///@todo Remove the Brunet.Symphony dependence
+using Brunet.Symphony;
+
 namespace Brunet.Connections
 {
 
@@ -95,6 +97,16 @@ namespace Brunet.Connections
         int idx0 = idx % Count;
         if( idx0 < 0 ) { idx0 += Count; }
         return (Connection)_connections[idx0];
+      }
+    }
+
+    public Connection this[Address a] {
+      get {
+        int idx = IndexOf(a);
+        if( idx < 0 ) {
+          throw new Exception( String.Format("Address {0} not in ConnectionList", a));
+        }
+        return (Connection)_connections[idx];
       }
     }
     /*
@@ -225,7 +237,7 @@ namespace Brunet.Connections
      */
     public static ConnectionList InsertInto(ConnectionList cl, Connection c, out int idx) {
       idx = cl.IndexOf(c.Address);
-      if( idx > 0 ) {
+      if( idx >= 0 ) {
         throw new ConnectionExistsException( cl[idx] );
       }
       idx = ~idx;
@@ -312,7 +324,7 @@ namespace Brunet.Connections
     /**
      * ConnectionList objects are immutable.  This method replaces a
      * Connection with a given Connection, and returns the new
-     * ConnectionList.  This is used for updating StatusMessage objects.
+     * ConnectionList. 
      * @param cl the ConnectionList to start with
      * @param old the Connection we are replacing
      * @param new_c the Connection we are replacing with.
@@ -453,7 +465,7 @@ namespace Brunet.Connections
           foreach(Connection c in _connections) {
             ArrayList c_vals = new ArrayList();
             c_vals.Add(c.Address.ToString());
-            c_vals.Add(c.Edge.ToUri());
+            c_vals.Add(c.State.Edge.ToUri());
             c_vals.Add(c.SubType);
             result.Add(c_vals);
           }
@@ -468,828 +480,187 @@ namespace Brunet.Connections
     }
     
   }
-
   /**
-   * Keeps track of all connections and all the
-   * mappings of Address -> Connection,
-   *             Edge -> Connection,
-   *             ConnectionType -> Connection List
-   *
-   * All classes other than ConnectionOverlord should only use
-   * the ReadOnly methods (not Add or Remove).
-   * ConnectionOverlord objects can call Add and Remove
-   * 
+   * This is an immutable class which holds a complete
+   * snapshot of the ConnectionTable state
    */
-
-  public sealed class ConnectionTable : IEnumerable
-  {
-    private readonly Random _rand;
-
-    /*
-     * These objects are often being reset (since we don't ever
-     * modify the data structures once set).
+  public class ConnectionTableState : IEnumerable<Connection> {
+    /*** If Closed new Connections cannot be added
      */
-    private Hashtable _type_to_conlist;
-    private Hashtable _edge_to_con;
+    public readonly bool Closed;
+    public readonly int View;
+    public readonly ImmutableList<Edge> Unconnected; 
 
-    /** Sequence number to track changes to the table.
-     * Local events should be processed in order, but 
-     * remote nodes can also track our connection table, and
-     * in those cases, the order of events may be lost.  This
-     * is so they can be ordered properly.  This number
-     * increases every time we make a change to the ConnectionTable
-     */
-    private int _view;
+    /////
+    // Protected
+    /////
 
-    //We mostly deal with structured connections,
-    //so we keep a ref to the address list for sructured
-    //this is an optimization.
-    private ConnectionList _struct_conlist;
+    protected readonly ConnectionList[] _type_to_conlist;
+    protected readonly Dictionary<Edge, Connection> _edge_to_con;
 
-    private ArrayList _unconnected;
+    ////
+    // Constructors
+    ////
 
-    /**
-     * These are the addresses we are trying to connect to.
-     * The key is the address, the value is the object that
-     * holds the lock.
-     */
-    private readonly Hashtable _address_locks;
+    public ConnectionTableState() {
+      Closed = false;
+      View = 0;
+      Array enum_vals = System.Enum.GetValues(typeof(ConnectionType));
+      _type_to_conlist = new ConnectionList[ enum_vals.Length ];
+      foreach(ConnectionType ct in enum_vals) {
+        _type_to_conlist[(int)ct] = new ConnectionList(ct);
+      }
+      Unconnected = ImmutableList<Edge>.Empty; 
+      _edge_to_con = new Dictionary<Edge,Connection>();
+    }
 
-    /** an object to lock for thread sync */
-    private readonly object _sync;
-    /**
-     * When there is a new connection, this event
-     * is fired.
-     */
-    public event EventHandler ConnectionEvent;
-    /**
-     * When a connection is lost, this event is fired
-     */
-    public event EventHandler DisconnectionEvent;
-    /**
-     * When status changes, this event is fired
-     */
-    public event EventHandler StatusChangedEvent;
+    protected ConnectionTableState(bool closed, int view, ConnectionList[] cons,
+                              Dictionary<Edge, Connection> e_to_c,
+                              ImmutableList<Edge> uncon) {
+      Closed = closed;
+      View = view;
+      _type_to_conlist = cons;
+      _edge_to_con = e_to_c;
+      Unconnected = uncon;
+    }
 
-    private readonly Address _local;
-
-    private bool _closed; 
-    /**
-     * Returns the total number of Connections.
-     * This is for the ICollection interface
-     */
-    public int TotalCount {
+    ////
+    // Properties
+    ////
+    public int Count {
       get {
-        int count = 0;
-        foreach(ConnectionType t in Enum.GetValues(typeof(ConnectionType)) ) {
-          count += Count(t);
-        }
-      return count;
+        return _edge_to_con.Count;
       }
     }
 
-    /**
-     * This is for the ICollection interface.
-     * It returns true
-     */
-    public bool IsSynchronized {
-      get { return true; }
+    ////
+    // Methods
+    ////
+
+    public ConnectionTableState AddUnconnected(Edge e) {
+      if( Unconnected.Contains(e) ) { return this; }
+      return new ConnectionTableState(Closed, View + 1,
+                                      _type_to_conlist,
+                                      _edge_to_con,
+                                      Unconnected.PushIntoNew(e));
     }
 
-  /**
-   * @param local the Address associated with the local node
-   */
+    public Pair<ConnectionTableState,int> AddConnection(Connection c) {
+      if( Closed ) { throw new TableClosedException(); }
+      var state = c.State;
+      Connection c_present = GetConnection(state.Edge);
+      if( c_present != null ) {
+        throw new ConnectionExistsException(c_present);
+      }
+      var newd = new Dictionary<Edge, Connection>(_edge_to_con);
+      newd[state.Edge] = c;
+      int mt_idx = (int)c.MainType;
+      var old_clist = _type_to_conlist[ mt_idx ];
+      var newt_to_c = (ConnectionList[])_type_to_conlist.Clone();
+      int c_idx;
+      newt_to_c[ mt_idx ] = ConnectionList.InsertInto(old_clist, c, out c_idx);
+      var unc = Unconnected.RemoveFromNew(state.Edge);
+      var cts = new ConnectionTableState(false, View + 1,
+                                      newt_to_c,
+                                      newd,
+                                      unc);
+      return new Pair<ConnectionTableState, int>(cts, c_idx);
+    }
 
-    public ConnectionTable(Address local)
+    public ConnectionTableState Close() {
+      if( Closed ) { return this; }
+      return new ConnectionTableState(true, View + 1,
+                                      _type_to_conlist,
+                                      _edge_to_con,
+                                      Unconnected);
+    }
+
+    public Connection GetConnection(Edge e) {
+      Connection res;
+      if( _edge_to_con.TryGetValue(e, out res) ) {
+        return res;
+      }
+      return null;
+    }
+
+    public ConnectionList GetConnections(ConnectionType ct) {
+      return _type_to_conlist[(int)ct];
+    }
+
+    /** return just the connections such that ConType == ct 
+     */
+    public IEnumerable<Connection> GetConnections(string ct) {
+      return new ConnectionTypeEnumerable(this, ct);
+    }
+
+    public IEnumerator<Connection> GetEnumerator()
     {
-      _rand = new Random();
-
-      _sync = new Object();
-      lock( _sync ) {
-        _local = local;
-        _type_to_conlist = new Hashtable();
-        _edge_to_con = new Hashtable();
-        _closed = false;
-        _unconnected = new ArrayList();
-
-        _address_locks = new Hashtable();
-        // init all--it is safer to do it this way and avoid null pointer exceptions
-
-        foreach(ConnectionType t in Enum.GetValues(typeof(ConnectionType)) ) {
-          Init(t);
-        }
-        _view = 0;
+      foreach(var kv in _edge_to_con) {
+        yield return kv.Value;
       }
     }
 
-    /**
-     * Make a ConnectionTable with the default address comparer
-     */
-    public ConnectionTable() : this(null) { }
-
-    /**
-     * When an Edge is added, the ConnectionTable listens
-     * for the Edges close event, and at that time, the
-     * edge is removed.  Edges should not be removed
-     * explicitly from the ConnectionTable, rather the
-     * Edge method Edge.Close() should be called, and
-     * the ConnectionTable will react properly
-     * @throws ConnectionExistsException if there is already such a connection
-     * @throws TableClosedException if the ConnectionTable is closed to new
-     * connections.
-     * @throws Exception if the Edge in this Connection is already closed.
-     */
-    public void Add(Connection c)
-    {
-      ConnectionType t = c.MainType;
-      Edge e = c.Edge;
-      ConnectionList new_cl;
-      int index;
-      int view;
-      lock(_sync) {
-        if( _closed ) { throw new TableClosedException(); }
-        Connection c_present = GetConnection(e);
-        if( c_present != null ) {
-          throw new ConnectionExistsException(c_present);
-        }
-        /*
-         * Here we actually do the storing:
-         */
-        /*
-         * Don't respond to the CloseEvent for now:
-         */
-        e.CloseEvent -= this.RemoveHandler;
-        if( e.IsClosed ) {
-          /*
-           * RemoveHandler is idempotent, so make sure it is called
-           * (since we removed the handler just before)
-           * This is safe to do while holding the lock because
-           * we don't have a connection on this edge, and thus
-           * there can't be a DisconnectionEvent caused by the RemoveHandler
-           */
-          RemoveHandler(e, null);
-          throw new Exception("Edge is already closed");
-        }
-        /*
-         * Copy so we don't mess up an old list
-         */
-        ConnectionList oldlist = GetConnections(t);
-        new_cl = ConnectionList.InsertInto(oldlist, c, out index);
-        _type_to_conlist = Functional.SetElement(_type_to_conlist, t, new_cl);
-        if( t == ConnectionType.Structured ) {
-          //Optimize the most common case to avoid the hashtable
-          _struct_conlist = new_cl;
-        }
-        _edge_to_con = Functional.Add(_edge_to_con, e, c);
-
-        int ucidx = _unconnected.IndexOf(e);
-        if( ucidx >= 0 ) {
-          _unconnected = Functional.RemoveAt(_unconnected, ucidx);
-        }
-        view =_view++;
-      } /* we release the lock */
-
-      /*
-       * If we get here we ALWAYS fire the ConnectionEvent even
-       * if the Edge might have closed in the mean time.  After
-       * the ConnectionEvent has fired, we'll start listening
-       * to the CloseEvent which will trigger our DisconnectionEvent
-       * upon Edge.Close
-       */
-      if(ConnectionEvent != null) {
-        try {
-          ConnectionEvent(this, new ConnectionEventArgs(c, index, new_cl, view) );
-        }
-        catch(Exception x) {
-          if(ProtocolLog.Exceptions.Enabled)
-            ProtocolLog.Write(ProtocolLog.Exceptions, String.Format(
-              "ConnectionEvent triggered exception: {0}\n{1}", c, x));
-        }
-      }
-      try {
-        e.CloseEvent += this.RemoveHandler;
-      }
-      catch {
-        /*
-         * If the edge was closed before we got it added, it might be
-         * added but never removed from the table.  Now that we have
-         * completely added the Connection and registered the handler
-         * for the CloseEvent, let's make sure it is still good.
-         * If it closes after this, the CloseEvent will catch it.
-         *
-         * Since RemoveHandler is idempotent, this is safe to call
-         * multiple times.
-         */
-        RemoveHandler(e, null);
-        // rethrow the exception
-        throw;
-      }
-      if(ProtocolLog.Stats.Enabled)
-        ProtocolLog.Write(ProtocolLog.Stats, String.Format(
-          "New Connection {0}|{1}", c, DateTime.UtcNow.Ticks));
+    IEnumerator IEnumerable.GetEnumerator() {
+      //Use the above
+      return this.GetEnumerator();
     }
 
-    /**
-     * When the ConnectionTable is closed, Add will throw a
-     * TableClosedException.
-     * This is used at the time of Node.Disconnect to make sure
-     * no new connections can be added
+    /** Removes a connection, if present
+     * idx is -1 if the connection was not present
      */
-    public void Close() {
-      lock( _sync ) { _closed = true; }
-    }
-
-    /**
-     * This function is to check if a given address of a given type
-     * is already in the table.  It is a synonym for IndexOf(t,a) >= 0.
-     * This function is just to eliminate any chance of confusion arising
-     * from using IndexOf to check for existence
-     */
-    public bool Contains(ConnectionType t, Address a)
-    {
-       return (IndexOf(t,a) >= 0);
-    }
-
-    /**
-     * @param t the ConnectionType we want to know the count of
-     * @return the number of connections of this type
-     */
-    public int Count(ConnectionType t)
-    {
-      ConnectionList list = null;
-      if( t == ConnectionType.Structured ) {
-        //Optimize the most common case to avoid the hashtable
-        list = _struct_conlist;
+    public Pair<ConnectionTableState,Pair<Connection,int>> RemoveConnection(Edge e) {
+      Connection c;
+      int idx;
+      ConnectionTableState newcts;
+      if(_edge_to_con.TryGetValue(e, out c)) { 
+        var newd = new Dictionary<Edge, Connection>(_edge_to_con);
+        newd.Remove(c.State.Edge);
+        int mt_idx = (int)c.MainType;
+        var old_clist = _type_to_conlist[ mt_idx ];
+        var newt_to_c = (ConnectionList[])_type_to_conlist.Clone();
+        idx = old_clist.IndexOf(c.Address);
+        newt_to_c[ mt_idx ] = ConnectionList.RemoveAt(old_clist, idx);
+        newcts = new ConnectionTableState(Closed, View + 1,
+                                      newt_to_c,
+                                      newd,
+                                      Unconnected);
       }
       else {
-        list = (ConnectionList)_type_to_conlist[t];
+        c = null;
+        idx = -1;
+        newcts = this;
       }
-      if( list == null ) { return 0; }
-      return list.Count;
+      var sideinfo = new Pair<Connection,int>(c, idx);
+      return new Pair<ConnectionTableState, Pair<Connection,int>>(newcts, sideinfo);
     }
 
-    /**
-     * This method removes the connection associated with an Edge,
-     * then it adds this edge to the list of unconnected nodes.
-     * 
-     * @param e The edge to disconnect
-     */
-    public void Disconnect(Edge e)
-    {
-      //Remove the edge, but keep a reference to it.
-      Remove(e, true);
-    }
-
-    public int UnconnectedCount
-    {
-      get
-      {
-        return _unconnected.Count;
+    public ConnectionTableState RemoveUnconnected(Edge e) {
+      var unc = Unconnected.RemoveFromNew(e);
+      if( unc == Unconnected ) {
+        //No change
+        return this;
       }
+      return new ConnectionTableState(Closed, View + 1,
+                                      _type_to_conlist,
+                                      _edge_to_con,
+                                      unc);
+
     }
-    /**
-     * Required for IEnumerable Interface
-     */
-    public IEnumerator GetEnumerator()
-    {
-      IDictionaryEnumerator en = _edge_to_con.GetEnumerator();
-      while( en.MoveNext() ) {
-        yield return en.Value;
+    public Pair<ConnectionTableState,Pair<Connection,int>> ReplaceEdge(Edge olde, Edge newe) {
+      Connection c;
+      int idx = -1;
+      ConnectionTableState newcts = this;
+      if( _edge_to_con.TryGetValue(olde, out c) ) {
+        var newd = new Dictionary<Edge, Connection>(_edge_to_con);
+        newd.Remove(olde);
+        newd[newe] = c;
+        newcts = new ConnectionTableState(Closed, View + 1,
+                                      _type_to_conlist,
+                                      newd,
+                                      Unconnected);
       }
-    }
-
-    /**
-     * Gets the Connection for the left structured neighbor of a given AHAddress
-     */
-    public Connection GetLeftStructuredNeighborOf(AHAddress address)
-    {
-      return _struct_conlist.GetLeftNeighborOf(address);
-    }
-
-    /**
-     * Gets the Connection for the right structured neighbor of a given AHAddress
-     */
-    public Connection GetRightStructuredNeighborOf(AHAddress address)
-    {
-      return _struct_conlist.GetRightNeighborOf(address);
-    }
-
-    /**
-     * @param t the ConnectionType of connection in question
-     * @param index the index of the connection in question
-     *
-     * The index "wraps around", or equivalently, 
-     * the result of getting (index + count) is the
-     * same as (index)
-     */
-    public Connection GetConnection(ConnectionType t, int index)
-    {
-      ConnectionList list;
-      if( t == ConnectionType.Structured ) {
-        //Optimize the most common case to avoid the hashtable
-        list = _struct_conlist;
-      }
-      else {
-        list = (ConnectionList)_type_to_conlist[t];
-      }
-      return list[index];
-    }
-    /**
-     * Convienience function.  Same as IndexOf followed by GetConnection
-     * Get the Connection for a given address
-     * @param t ConnectionType we want
-     * @param a the address we are looking for
-     * @return null if there is no such connection
-     */
-    public Connection GetConnection(ConnectionType t, Address a)
-    {
-      ConnectionList list = GetConnections(t);
-      Connection c = null;
-      int idx = list.IndexOf(a);
-      if( idx >= 0 ) {
-        c = list[idx];
-      }
-      return c;
-    }
-    /**
-     * Returns a Connection for the given edge:
-     * @return Connection
-     */
-    public Connection GetConnection(Edge e)
-    {
-      if( e == null ) { return null; } //Is this really a good idea?
-      return (Connection)_edge_to_con[e];
-    }
-
-    /**
-     * Return all the connections of type t.
-     * This NEVER CHANGES onces created, so don't
-     * worry about locking.
-     * @param t the Type of Connections we want
-     * @return an enumerable that we can foreach over
-     */
-    public ConnectionList GetConnections(ConnectionType t)
-    {
-      if( t == ConnectionType.Structured ) {
-        return _struct_conlist;
-      }
-      else {
-        return (ConnectionList)_type_to_conlist[t];
-      }
-    }
-    /**
-     * Return all the connections of type t.
-     * This NEVER CHANGES onces created, so don't
-     * worry about locking.
-     * @param t the Type of Connections we want
-     * @return an enumerable that we can foreach over
-     */
-    public IEnumerable GetConnections(string t)
-    {
-      return new ConnectionTypeEnumerable(this, t);
-    }
-    /**
-     * Returns at most i structured connections which are nearest
-     * to destination
-     * @param dest the target we are asking for connections close to
-     * @param max_count the maximum number of connections to return
-     * @return a list of structured connections closest to the destination
-     * EXCLUDING The destination itself.
-     * @deprecated
-     */
-    public ArrayList GetNearestTo(AHAddress dest, int max_count)
-    {
-      ConnectionList near = _struct_conlist.GetNearestTo(dest, max_count);
-      ArrayList ret_val = new ArrayList();
-      foreach(Connection c in near) {
-        ret_val.Add(c);
-      }
-      return ret_val;
-    }
-    /**
-     * @return a random connection of type t
-     * @deprecated
-     */
-    public Connection GetRandom(ConnectionType t)
-    {
-      ConnectionList list = GetConnections(t);
-      int size = list.Count;
-      if( size == 0 )
-        return null;
-      else {
-        int pos = _rand.Next( size );
-        return list[pos];
-      }
-    }
-
-    /**
-     * Returns an IEnumerable of the _unconnected edges
-     */
-    public IEnumerable GetUnconnectedEdges()
-    {
-      return _unconnected;
-    }
-
-    /**
-     * Before we can use a ConnectionType, that type must
-     * be initialized 
-     */
-    private void Init(ConnectionType t)
-    {
-      ConnectionList new_list = new ConnectionList(t);
-      lock( _sync ) {
-        if( t == ConnectionType.Structured ) {
-          _struct_conlist = new_list; 
-        }
-        _type_to_conlist[t] = new_list;
-      }
-    }
-
-    /**
-     * @param t the ConnectionType
-     * @param a the Address you want to know the index of
-     * @return the index.  If it is negative, the bitwise
-     * compliment would indicate where it should be in the
-     * list.
-     * @deprecated
-     */
-    public int IndexOf(ConnectionType t, Address a)
-    {
-      ConnectionList list = GetConnections(t);
-      return list.IndexOf(a);
-    }
-
-    /**
-     * @return the number of Structured Connections in the interval
-     * (a1, a2) (not including the end points) when we move to the left.
-     * @deprecated
-     */
-    public int LeftInclusiveCount(AHAddress a1, AHAddress a2) {
-      return _struct_conlist.LeftInclusiveCount(a1,a2);
-    }
-    /**
-     * @return the number of Structured Connections in the interval
-     * (a1, a2) (not including the end points) when we move to the right.
-     */
-    public int RightInclusiveCount(AHAddress a1, AHAddress a2) {
-      return _struct_conlist.RightInclusiveCount(a1,a2);
-    }
-
-    /**
-     * @param a the Address to lock
-     * @param t the type of connection
-     * @param locker the object wishing to hold the lock
-     *
-     * We use this to make sure that two linkers are not
-     * working on the same address for the same connection type
-     *
-     * @throws ConnectionExistsException if there is already a connection to this address
-     * @throws CTLockException if we cannot get the lock
-     * @throws CTLockException if lockedvar is not null or a, when called. 
-     */
-    public void Lock(Address a, string t, ILinkLocker locker)
-    {
-      ConnectionType mt = Connection.StringToMainType(t);
-      lock( _sync ) {
-        if( null == a ) { return; }
-        if( locker.TargetLock != null && (false == a.Equals(locker.TargetLock)) ) {
-          //We only overwrite the locker.TargetLock() if it is null:
-          throw new CTLockException(
-                  String.Format("locker.TargetLock() not null, set to: {0}", locker.TargetLock));
-        }
-        Connection c_present = GetConnection(mt, a);
-        if( c_present != null ) {
-          /**
-           * We already have a connection of this type to this node.
-           */
-          throw new ConnectionExistsException(c_present);
-        }
-        Hashtable locks = (Hashtable)_address_locks[mt];
-        if( locks == null ) {
-          locks = new Hashtable();
-          _address_locks[mt] = locks;
-        }
-        ILinkLocker old_locker = (ILinkLocker)locks[a];
-        if( null == old_locker ) {
-          locks[a] = locker;
-          locker.TargetLock = a;
-          if(ProtocolLog.ConnectionTableLocks.Enabled) {
-            ProtocolLog.Write(ProtocolLog.ConnectionTableLocks,
-              String.Format("{0}, locker: {1} Unlocking: {2}",
-                            _local, locker, a));
-          }
-        }
-        else if (old_locker == locker) {
-          //This guy already holds the lock
-          locker.TargetLock = a;
-        }
-        else if ( old_locker.AllowLockTransfer(a,t,locker) ) {
-        //See if we can transfer the lock:
-          locks[a] = locker;
-          locker.TargetLock = a;
-          //Make sure the lock is null
-          old_locker.TargetLock = null;
-        }
-        else {
-          if(ProtocolLog.ConnectionTableLocks.Enabled) {
-            ProtocolLog.Write(ProtocolLog.ConnectionTableLocks,
-              String.Format("{0}, {1} tried to lock {2}, but {3} holds the lock",
-              _local, locker, a, locks[a]));
-          }
-          throw new CTLockException(
-                      String.Format(
-                        "Lock on {0} cannot be transferred from {1} to {2}",
-                        a, old_locker, locker));
-        }
-      }
-    }
-
-    /**
-     * Remove the connection associated with an edge from the table
-     * @param e Edge whose connection should be removed
-     * @param add_unconnected if true, keep a reference to the edge in the
-     * _unconnected list
-     */
-    private void Remove(Edge e, bool add_unconnected)
-    {
-      int index = -1;
-      bool have_con = false;
-      Connection c = null;
-      ConnectionList new_cl = null;
-      int view;
-      lock(_sync) {
-        c = GetConnection(e);	
-        have_con = (c != null);
-        if( have_con )  {
-          ConnectionType t = c.MainType;
-          ConnectionList old_cl = GetConnections(t);
-          index = old_cl.IndexOf(c.Address);
-          //Here we go:
-          new_cl = ConnectionList.RemoveAt(old_cl, index);
-          _type_to_conlist = Functional.SetElement(_type_to_conlist, t, new_cl);
-          if( t == ConnectionType.Structured ) {
-            //Optimize the most common case to avoid the hashtable
-            _struct_conlist = new_cl;
-          }
-          //Remove the edge from the tables:
-          _edge_to_con = Functional.Remove(_edge_to_con,e);
-          
-          if( add_unconnected ) {
-            _unconnected = Functional.Add(_unconnected, e);
-            if(ProtocolLog.Stats.Enabled) {
-              ProtocolLog.Write(ProtocolLog.Stats, String.Format(
-                "Intermediate add to unconnected {0}|{1}", e, DateTime.UtcNow.Ticks));
-            }
-          }
-        }
-        else if( !add_unconnected ) {
-//We didn't have a connection, so, check to see if we have it in _unconnected:
-//Don't keep this edge around at all:
-          int idx = _unconnected.IndexOf(e);
-          if( idx >= 0 ) {
-            _unconnected = Functional.RemoveAt(_unconnected, idx);
-          }
-          if(ProtocolLog.Stats.Enabled) {
-            ProtocolLog.Write(ProtocolLog.Stats, String.Format(
-              "Edge removed from unconnected {0}|{1}", e, DateTime.UtcNow.Ticks));
-          }
-        }
-        view = _view++;
-      }
-      if( have_con ) {
-        if(ProtocolLog.Connections.Enabled) {
-          DateTime now = DateTime.UtcNow;
-          TimeSpan con_life = now - c.CreationTime;
-          ProtocolLog.Write(ProtocolLog.Connections,
-            String.Format("New Disconnection[{0}]: {1}, instant: {2}, con_life: {3} ", 
-			                    index, c, now, con_life));
-        }
-
-        if(ProtocolLog.Stats.Enabled) {
-          ProtocolLog.Write(ProtocolLog.Stats, String.Format(
-            "Disconnection {0}|{1}", c, DateTime.UtcNow.Ticks));
-        }
-
-        //Announce the disconnection:
-        if( DisconnectionEvent != null ) {
-          try {
-            DisconnectionEvent(this, new ConnectionEventArgs(c, index, new_cl, view));
-          }
-          catch(Exception x) {
-            if(ProtocolLog.Exceptions.Enabled)
-              ProtocolLog.Write(ProtocolLog.Exceptions, String.Format(
-                "DisconnectionEvent triggered exception: {0}\n{1}", c, x));
-          }
-        }
-      }
-    }
-
-    /**
-     * When an Edge closes, this handler is called
-     * This is just a wrapper for Remove
-     */
-    private void RemoveHandler(object edge, EventArgs args)
-    {
-      Edge e = (Edge)edge;
-      e.CloseEvent -= this.RemoveHandler;
-      //Get rid of the edge and don't add it to our _unconnected list
-      Remove(e, false);
-    }
-
-    /**
-     * Print out all the tables (for debugging mostly)
-     */
-    public override string ToString()
-    {
-      System.Text.StringBuilder sb = new System.Text.StringBuilder();
-
-      IDictionaryEnumerator myEnumerator;
-      sb.Append("------Begin Table------\n");
-      sb.Append("Type : Address Table\n");
-
-      lock(_sync) {
-        sb.Append("\nType : Edge Table\n");
-        myEnumerator = _type_to_conlist.GetEnumerator();
-        while (myEnumerator.MoveNext()) {
-          sb.Append("Type: ");
-          sb.Append(myEnumerator.Key.ToString() + "\n");
-          sb.Append("Edge Table:\n");
-          ConnectionList t = (ConnectionList) myEnumerator.Value;
-          foreach(System.Object o in t) {
-            sb.Append("\t" + o.ToString() + "\n");
-          }
-        }
-        sb.Append("\nEdge : Type\n");
-        myEnumerator = _edge_to_con.GetEnumerator();
-        while (myEnumerator.MoveNext()) {
-          sb.Append("Edge: ");
-          sb.Append(myEnumerator.Key.ToString() + "\n");
-          sb.Append("Connection: ");
-          sb.Append(myEnumerator.Value.ToString() + "\n");
-        }
-      }
-      sb.Append("\n------End of Table------\n\n");
-      return sb.ToString();
-    }
-
-    /**
-     * We use this to make sure that two linkers are not
-     * working on the same address
-     * @param t the type of connection.
-     * @param locker the object which holds the lock.
-     * @throw Exception if the lock is not held by locker
-     */
-    public void Unlock(string t, ILinkLocker locker)
-    {
-      ConnectionType mt = Connection.StringToMainType(t);
-      lock( _sync ) {
-        if( locker.TargetLock != null ) {
-          Hashtable locks = (Hashtable)_address_locks[mt];
-          if(ProtocolLog.ConnectionTableLocks.Enabled) {
-            ProtocolLog.Write(ProtocolLog.ConnectionTableLocks,
-              String.Format("{0} Unlocking {1}", _local, locker.TargetLock));
-          }
-
-          object real_locker = locks[locker.TargetLock];
-          if(null == real_locker) {
-            string err = String.Format("On node " + _local + ", " + locker +
-              " tried to unlock " + locker.TargetLock + " but no such lock" );
-            if(ProtocolLog.ConnectionTableLocks.Enabled) {
-              ProtocolLog.Write(ProtocolLog.ConnectionTableLocks, err);
-            }
-            throw new Exception(err);
-          }
-          else if(real_locker != locker) {
-            string err = String.Format("On node " + _local + ", " + locker +
-                " tried to unlock " + locker.TargetLock + " but not the owner");
-            if(ProtocolLog.ConnectionTableLocks.Enabled) {
-              ProtocolLog.Write(ProtocolLog.ConnectionTableLocks, err);
-            }
-            throw new Exception(err);
-          }
-
-          locks.Remove(locker.TargetLock);
-          locker.TargetLock = null;
-        }
-      }
-    }
-
-    /**
-     * update the StatusMessage for a particular Connection.  Since 
-     * Connections are immutable so we make a new Connection object 
-     * with the new StatusMessage. All other constructor arguments
-     * are taken from the old Connection instance.
-     * This will fail if the con argument is not present.
-     * @param con Connection to update.
-     * @param sm StatusMessage to replace the old.
-     * @return the new Connection
-     * @throws Exception if con is not in the table
-     */
-    public Connection UpdateStatus(Connection con, StatusMessage sm)
-    {
-      ConnectionType t = con.MainType;
-      Address a = con.Address;
-      Edge e = con.Edge;
-      string con_type = con.ConType;
-      LinkMessage plm = con.PeerLinkMessage;
-      ConnectionList cl;
-        //Make the new connection and replace it in our data structures:
-      Connection newcon = new Connection(e,a,con_type,sm,plm);
-      int index;
-      int view;
-      lock(_sync) {
-        cl = GetConnections(t);
-        cl = ConnectionList.Replace(cl, con, newcon, out index);
-        //Update the Edge -> Connection mapping
-        _edge_to_con = Functional.SetElement(_edge_to_con, e, newcon);
-        //Update the ConnectionType -> ConnectionList mapping
-        _type_to_conlist = Functional.SetElement(_type_to_conlist, t, cl);
-
-        if( t == ConnectionType.Structured ) {
-          //Optimize the most common case to avoid the hashtable
-          _struct_conlist = cl;
-        }
-        view = _view++;
-      } /* we release the lock */
-
-      /* Send the event: */
-      if( StatusChangedEvent != null ) {
-        try {
-          StatusChangedEvent(sm, new ConnectionEventArgs(newcon, index, cl, view) );
-        }
-        catch(Exception x) {
-          if(ProtocolLog.Exceptions.Enabled)
-            ProtocolLog.Write(ProtocolLog.Exceptions, String.Format(
-              "StatusChangedEvent triggered exception: {0}\n{1}", newcon, x));
-        }
-      }
-      return newcon;
-    }
-
-    /**
-     * When a new Edge is created by the the Linker or received
-     * by the ConnectionPacketHandler, they tell the ConnectionTable
-     * about it.  It is sort of a null connection.  The ConnectionTable
-     * should still know about all the Edge objects for the Node.
-     *
-     * When a connection is made, there is never a need to remove
-     * _unconnected edges.  Either a connection is made (which will
-     * remove the edge from this list) or the edge will be closed
-     * (which will remove the edge from this list).
-     *
-     * @param e the new _unconnected Edge
-     */
-    public void AddUnconnected(Edge e)
-    {
-      if(ProtocolLog.Stats.Enabled) {
-        ProtocolLog.Write(ProtocolLog.Stats, String.Format(
-          "Initial add to unconnected {0}|{1}", e, DateTime.UtcNow.Ticks));
-      }
-      lock( _sync ) {
-        if( _closed ) { throw new TableClosedException(); }
-        Connection c = GetConnection(e);
-        if( c != null ) {
-          throw new Exception("We already have a Connection, can't add to Unconnected: " + c.ToString());
-        }
-        e.CloseEvent -= this.RemoveHandler;
-        if( e.IsClosed ) {
-          /*
-           * RemoveHandler is idempotent, so make sure it is called
-           * (since we removed the handler just before)
-           * This is safe to do while holding the lock because
-           * we don't have a connection on this edge, and thus
-           * there can't be a DisconnectionEvent caused by the RemoveHandler
-           */
-          RemoveHandler(e, null);
-          throw new Exception("Edge is already closed");
-        }
-        int idx = _unconnected.IndexOf(e);
-        if( idx < 0 ) {
-          _unconnected = Functional.Add(_unconnected, e);
-        }
-        try {
-          e.CloseEvent += this.RemoveHandler;
-        }
-        catch {
-         /*
-          * If the edge was closed before we got it added, it might be
-          * added but never removed from the table.  Now that we have
-          * completely added the Connection and registered the handler
-          * for the CloseEvent, let's make sure it is still good.
-          * If it closes after this, the CloseEvent will catch it.
-          */
-          RemoveHandler(e, null);
-          throw;
-        }
-      }
-    }
-    /**
-     * @param edge Edge to check to see if it is an Unconnected Edge
-     * @return true if this edge is an _unconnected edge
-     */
-    public bool IsUnconnected(Edge e)
-    {
-      return _unconnected.Contains(e);
+      var sideinfo = new Pair<Connection,int>(c, idx);
+      return new Pair<ConnectionTableState, Pair<Connection,int>>(newcts, sideinfo);
     }
     /**
      * Handles enumerating connection types, not just all
@@ -1302,7 +673,7 @@ namespace Brunet.Connections
       private readonly string _contype;
       private readonly IEnumerable _cons;
 
-      public ConnectionTypeEnumerable(ConnectionTable tab, string contype)
+      public ConnectionTypeEnumerable(ConnectionTableState tab, string contype)
       {
         _contype = contype;
         ConnectionType ct = Connection.StringToMainType(contype);
@@ -1332,6 +703,348 @@ namespace Brunet.Connections
         }
       }
     }
+  }
+
+  /**
+   * Keeps track of all connections and all the
+   * mappings of Address -> Connection,
+   *             Edge -> Connection,
+   *             ConnectionType -> Connection List
+   *
+   * All classes other than ConnectionOverlord should only use
+   * the ReadOnly methods (not Add or Remove).
+   * ConnectionOverlord objects can call Add and Remove
+   * 
+   */
+
+  public sealed class ConnectionTable : IEnumerable
+  {
+    /**
+     * When there is a new connection, this event
+     * is fired.
+     */
+    public event EventHandler ConnectionEvent;
+    /**
+     * When a connection is lost, this event is fired
+     */
+    public event EventHandler DisconnectionEvent;
+    /**
+     * ANY time the ConnectionTableState State changes, this is fired
+     * the EventArg is a ConnectionEventArgs with potentially null Connection, and idx = -1,
+     * in the case of table closing, and AddUnconnected
+     */
+    public event EventHandler StateEvent;
+
+    private readonly Mutable<ConnectionTableState> _cts;
+
+    public ConnectionTableState State {
+      get { 
+        return _cts.State;
+      }
+    }
+    private readonly IEdgeReplacementPolicy _erp;
+  
+    public ConnectionTable() : this(NeverReplacePolicy.Instance) { }
+
+    public ConnectionTable(IEdgeReplacementPolicy erp)
+    {
+      _cts = new Mutable<ConnectionTableState>(new ConnectionTableState());
+      _erp = erp;
+    }
+
+    /**
+     * When an Edge is added, the ConnectionTable listens
+     * for the Edges close event, and at that time, the
+     * edge is removed.  Edges should not be removed
+     * explicitly from the ConnectionTable, rather the
+     * Edge method Edge.Close() should be called, and
+     * the ConnectionTable will react properly
+     * @throws ConnectionExistsException if there is already such a connection
+     * @throws TableClosedException if the ConnectionTable is closed to new
+     * connections.
+     * @throws Exception if the Edge in this Connection is already closed.
+     */
+    public ConnectionEventArgs Add(Connection c)
+    {
+      var cs = c.State;
+      Edge e = cs.Edge;
+      Converter<ConnectionTableState, Pair<ConnectionTableState,int>> add_up =
+        delegate(ConnectionTableState cts) {
+          var ncts = cts.RemoveUnconnected(e);
+          try {
+            return ncts.AddConnection(c);
+          }
+          catch(ConnectionExistsException) {
+            //The state didn't change, we just replaced an edge:
+            return new Pair<ConnectionTableState, int>(cts, -1);
+          }
+        };
+      Triple<ConnectionTableState,ConnectionTableState,int> res
+        = _cts.Update<int>(add_up);
+      
+      var cea = new ConnectionEventArgs(c, cs, res.Third, res.First, res.Second);
+      if( res.First == res.Second ) {
+        /*
+         * A connection to this Address already exists:
+         * See about replacement:
+         */
+        ConnectionTableState cts = res.Second;
+        Connection old_con = cts.GetConnections(c.MainType)[c.Address];
+        ConnectionState old_cs = old_con.State; 
+        ConnectionState rep = _erp.GetReplacement(cts, old_con, old_cs, cs);
+        if( old_cs != rep ) {
+          old_con.SetState(rep);
+          //The old edge is now unconnected:
+          AddUnconnected(old_cs.Edge);
+        }
+        //No ConnectionTableState change, so no need to send an event
+        return cea;
+      }
+      SendEvent(ConnectionEvent, cea);
+      SendEvent(StateEvent, cea);
+      /*
+       * Watch to see if the Edge inside this connection changes:
+       */
+      c.StateChangeEvent += delegate(Connection cx, Pair<ConnectionState,ConnectionState> oldnew) {
+        if( oldnew.Second.Disconnected ) {
+          Remove(oldnew.Second.Edge, true);
+        }
+        else if( oldnew.First.Edge != oldnew.Second.Edge ) {
+          _cts.Update<Pair<Connection,int>>(delegate(ConnectionTableState cts) {
+            return cts.ReplaceEdge(oldnew.First.Edge, oldnew.Second.Edge);
+          });
+          //Make sure we watch if this edge is closed:
+          Edge ne = oldnew.Second.Edge;
+          try { ne.CloseEvent += RemoveHandler; }
+          catch { RemoveHandler(ne, null); }
+        }
+      };
+      /*
+       * Make sure to watch if the edge closes
+       */
+      try {
+        //If this edge is already closed, the below throws
+        e.CloseEvent += RemoveHandler;
+      }
+      catch {
+        RemoveHandler(e, null);
+        throw;
+      }
+      
+      if(ProtocolLog.Stats.Enabled) {
+        ProtocolLog.Write(ProtocolLog.Stats, String.Format(
+          "New Connection {0}|{1}", c, DateTime.UtcNow.Ticks));
+      }
+      return cea;
+    }
+    /**
+     * When a new Edge is created by the the Linker or received
+     * by the ConnectionPacketHandler, they tell the ConnectionTable
+     * about it.  It is sort of a null connection.  The ConnectionTable
+     * should still know about all the Edge objects for the Node.
+     *
+     * When a connection is made, there is never a need to remove
+     * _unconnected edges.  Either a connection is made (which will
+     * remove the edge from this list) or the edge will be closed
+     * (which will remove the edge from this list).
+     *
+     * @param e the new _unconnected Edge
+     */
+    public Pair<ConnectionTableState, ConnectionTableState> AddUnconnected(Edge e)
+    {
+      if(ProtocolLog.Stats.Enabled) {
+        ProtocolLog.Write(ProtocolLog.Stats, String.Format(
+          "Initial add to unconnected {0}|{1}", e, DateTime.UtcNow.Ticks));
+      }
+      Converter<ConnectionTableState, ConnectionTableState> addunc =
+        delegate(ConnectionTableState cts) {
+          Connection c = cts.GetConnection(e);
+          if( c != null ) {
+            throw new Exception("We already have a Connection, can't add to Unconnected: " + c.ToString());
+          }
+          return cts.AddUnconnected(e);
+        };
+      var res = _cts.Update(addunc);
+      if( res.First != res.Second ) {
+        //There was actually a state change:
+        var cea = new ConnectionEventArgs(null, null, -1, res.First, res.Second);
+        SendEvent(StateEvent, cea);
+        try {
+          e.CloseEvent += RemoveHandler;
+        }
+        catch {
+          RemoveHandler(e, null);
+          throw;
+        }
+      }
+      return res;
+    }
+
+    /**
+     * When the ConnectionTable is closed, Add will throw a
+     * TableClosedException.
+     * This is used at the time of Node.Disconnect to make sure
+     * no new connections can be added
+     */
+    public Pair<ConnectionTableState, ConnectionTableState> Close() {
+      Converter<ConnectionTableState, ConnectionTableState> close =
+        delegate(ConnectionTableState cts) {
+          return cts.Close();
+        };
+      var res = _cts.Update(close);
+      if( res.First != res.Second ) {
+        var cea = new ConnectionEventArgs(null, null, -1, res.First, res.Second);
+        SendEvent(StateEvent, cea);
+      }
+      return res;
+    }
+
+    /**
+     * Remove the connection associated with an edge from the table
+     * @param e Edge whose connection should be removed
+     * @param add_unconnected if true, keep a reference to the edge in the
+     * _unconnected list
+     */
+    private ConnectionEventArgs Remove(Edge e, bool add_unconnected)
+    {
+      Converter<ConnectionTableState,Pair<ConnectionTableState,
+                                          Pair<Connection,int>>> remcon =
+        delegate(ConnectionTableState cts) {
+          //Remove the connection:
+          Pair<ConnectionTableState, Pair<Connection,int>>
+            res = cts.RemoveConnection(e);
+          if(add_unconnected) {
+            var ncts = res.First.AddUnconnected(e);
+            return new Pair<ConnectionTableState, Pair<Connection,int>>(ncts, res.Second);
+          }
+          else { 
+            if( res.Second.First == null ) {
+              //There was no connection, in this case, we need to remove from
+              //unconnected:
+              var ncts = res.First.RemoveUnconnected(e);
+              return new Pair<ConnectionTableState,Pair<Connection,int>>(ncts,res.Second);
+            }
+            else {
+              //There was a connection, but now it has been removed:
+              return res;
+            }
+          }
+        };
+      Triple<ConnectionTableState,ConnectionTableState,Pair<Connection,int>> ures
+        = _cts.Update<Pair<Connection,int>>(remcon);
+      Connection c = ures.Third.First;
+      ConnectionState cs = null != c ? c.State : null;
+      int idx = ures.Third.Second;
+      var cea = new ConnectionEventArgs(c, cs, idx, ures.First, ures.Second);
+      if( idx != -1 ) {
+        if(ProtocolLog.Connections.Enabled) {
+          DateTime now = DateTime.UtcNow;
+          TimeSpan con_life = now - c.CreationTime;
+          ProtocolLog.Write(ProtocolLog.Connections,
+            String.Format("New Disconnection[{0}]: {1}, instant: {2}, con_life: {3} ", 
+			                    idx, c, now, con_life));
+        }
+
+        if(ProtocolLog.Stats.Enabled) {
+          ProtocolLog.Write(ProtocolLog.Stats, String.Format(
+            "Disconnection {0}|{1}", c, DateTime.UtcNow.Ticks));
+        }
+        SendEvent(DisconnectionEvent, cea);
+        SendEvent(StateEvent, cea);
+      }
+      return cea;
+    }
+
+    /**
+     * When an Edge closes, this handler is called
+     * This is just a wrapper for Remove
+     */
+    private void RemoveHandler(object edge, EventArgs args)
+    {
+      //Get rid of the edge and don't add it to our _unconnected list
+      Remove((Edge)edge, false);
+    }
+    private void SendEvent(EventHandler eh, ConnectionEventArgs cea) {
+      if( eh != null ) {
+        try { eh(this, cea); }
+        catch(Exception x) {
+          if(ProtocolLog.Exceptions.Enabled)
+            ProtocolLog.Write(ProtocolLog.Exceptions, String.Format(
+              "ConnectionEvent triggered exception: {0}\n{1}", cea, x));
+        }
+      }
+    }
+
+ // /////////////
+ // Deprecated Methods.  These are not safe for concurrent programing because
+ // The state can change between calls.  Prefer to read the State, and use the methods
+ // there.
+ // @todo find code that calls these methods, and replace it with reading the
+ // State first, and working from that.
+ // /////////////
+    ///@deprecated
+    public int TotalCount { 
+      get {
+        var cts = State;
+        int count = 0;
+        foreach(ConnectionType t in Enum.GetValues(typeof(ConnectionType)) ) {
+          count += cts.GetConnections(t).Count;
+        }
+        return count;
+      }
+    }
+    public int UnconnectedCount { get { return State.Unconnected.Count; } }
+    
+    ///@deprecated
+    public bool Contains(ConnectionType t, Address a) {
+      return IndexOf(t,a) >= 0;
+    } 
+    ///@deprecated
+    public int Count(ConnectionType t) {
+      return GetConnections(t).Count;
+    }
+    public ConnectionList GetConnections(ConnectionType t) {
+      return State.GetConnections(t);
+    } 
+    public Connection GetConnection(ConnectionType t, int idx) {
+      return GetConnections(t)[idx];
+    }
+    public Connection GetConnection(ConnectionType t, Address a) {
+      try {
+        return GetConnections(t)[a];
+      }
+      catch { return null; }
+    }
+    public Connection GetConnection(Edge e) {
+      return State.GetConnection(e);
+    }
+    public IEnumerable GetConnections(string t) {
+      return State.GetConnections(t);
+    }
+    public Connection GetLeftStructuredNeighborOf(Address ad) {
+      return GetConnections(ConnectionType.Structured).GetLeftNeighborOf(ad);
+    }
+    public Connection GetRightStructuredNeighborOf(Address ad) {
+      return GetConnections(ConnectionType.Structured).GetRightNeighborOf(ad);
+    }
+    public IEnumerable GetUnconnectedEdges() {
+      return State.Unconnected;
+    }
+    public IEnumerator GetEnumerator() {
+      return State.GetEnumerator();
+    }
+    public ArrayList GetNearestTo(Address dest, int max_count) {
+      var cons = State.GetConnections(ConnectionType.Structured).GetNearestTo(dest, max_count);
+      var res = new ArrayList();
+      foreach(Connection c in cons) {
+        res.Add(c);
+      }
+      return res;
+    }
+    public int IndexOf(ConnectionType t, Address a) {
+      return State.GetConnections(t).IndexOf(a);
+    }
+
   }
 
   /** A class to do some reading of the ConnectionTable
@@ -1449,7 +1162,7 @@ namespace Brunet.Connections
     public void HandleRpc(ISender caller, string method, IList arguments, object request_state) {
       if( method == "GetConnections" ) {
         ConnectionType ct = Connection.StringToMainType((string)arguments[0]);
-        ConnectionList cl = _tab.GetConnections(ct);
+        ConnectionList cl = _tab.State.GetConnections(ct);
         if( cl != null ) {
           _rpc.SendResult(request_state, cl.ToList());   
         }
@@ -1550,52 +1263,6 @@ namespace Brunet.Connections
     }
 
     [Test]
-    public void LockTest() {
-      byte[]  abuf = new byte[20];
-      Address a = new AHAddress(abuf);
-
-      ConnectionTable tab = new ConnectionTable();
-      TestLinkLocker lt = new TestLinkLocker(true);
-      TestLinkLocker lf = new TestLinkLocker(false);
-
-      //Get a lock on a.
-      tab.Lock(a, "structured.near", lt);
-      Assert.AreEqual(a, lt.TargetLock, "lt has lock");
-      tab.Unlock("structured.near", lt);
-      Assert.IsNull(lt.TargetLock, "Unlock nulling test");
-      //Unlock null should be fine:
-      tab.Unlock("structured.near", lt); 
-      Assert.IsNull(lt.TargetLock, "Unlock nulling test");
-      //We can't unlock if we don't have the lock:
-      lt.TargetLock = a;
-
-      try {
-        tab.Unlock("structured.near", lt);
-        Assert.IsFalse(true, "We were able to unlock an address incorrectly");
-      } catch { }
-      //Get a lock and transfer:
-      tab.Lock(a, "structured.near", lt);
-      Assert.AreEqual(a, lt.TargetLock, "lt has lock");
-      tab.Lock(a, "structured.near", lf);
-      Assert.IsTrue(lf.TargetLock == a, "Lock was transferred to lf");
-      //lt.TargetLock should be null;
-      Assert.IsNull(lt.TargetLock, "lock was transfered and we are null");
-      
-      //Now, lt should not be able to get the lock:
-      try {
-        tab.Lock(a, "structured.near", lt);
-        Assert.IsFalse(true, "We somehow got the lock");
-      }
-      catch { }
-      Assert.IsNull(lt.TargetLock, "lt shouldn't hold the lock");
-      Assert.AreEqual(lf.TargetLock, a, "lf still holds the lock");
-      //Now let's unlock:
-      tab.Unlock("structured.near", lf);
-      //lf.TargetLock should be null;
-      Assert.IsNull(lf.TargetLock, "lock was transfered and we are null");
-
-    }
-    [Test]
     public void LoopTest() {
       //Make some fake edges: 
       TransportAddress home_ta =
@@ -1628,11 +1295,11 @@ namespace Brunet.Connections
       tab.Add(new Connection(e1, a1, "structured", null, null));
       tab.Add(new Connection(e2, a2, "structured.near", null, null));
 
-      Assert.AreEqual(tab.TotalCount, 2, "total count");
-      Assert.AreEqual(tab.Count(ConnectionType.Structured) , 2, "structured count");
+      Assert.AreEqual(tab.State.Count, 2, "total count");
+      Assert.AreEqual(tab.State.GetConnections(ConnectionType.Structured).Count, 2, "structured count");
       
       int total = 0;
-      foreach(Connection c in tab) {
+      foreach(Connection c in tab.State) {
 	total++;
 	//Mostly a hack to make sure the compiler doesn't complain about an
 	//unused variable
@@ -1643,7 +1310,7 @@ namespace Brunet.Connections
       Assert.AreEqual(total,2,"all connections");
      
       int struct_tot = 0;
-      foreach(Connection c in tab.GetConnections(ConnectionType.Structured)) {
+      foreach(Connection c in tab.State.GetConnections(ConnectionType.Structured)) {
         struct_tot++;
 	//Mostly a hack to make sure the compiler doesn't complain about an
 	//unused variable
@@ -1652,7 +1319,7 @@ namespace Brunet.Connections
       }
       Assert.AreEqual(struct_tot, 2, "structured connections");
       int near_tot = 0;
-      foreach(Connection c in tab.GetConnections("structured.near")) {
+      foreach(Connection c in tab.State.GetConnections("structured.near")) {
         near_tot++;
 	//Mostly a hack to make sure the compiler doesn't complain about an
 	//unused variable
@@ -1679,44 +1346,30 @@ namespace Brunet.Connections
           //Must put different edges in each time.
           Connection c = new Connection(e, a, "structured", null, null);
           tab.Add( c );
-          Assert.AreEqual( tab.GetConnection(e),
-                           tab.GetConnection(ConnectionType.Structured, a),
+          Assert.AreEqual( tab.State.GetConnection(e),
+                           tab.State.GetConnections(ConnectionType.Structured)[a],
                            "Edge equals Address lookup");
                                                 
         }
         //Now do some tests:
         for(int k = 0; k < 100; k++) {
-        if( r.Next(2) == 0 ) {
           byte[] buf = new byte[ Address.MemSize ];
           r.NextBytes(buf);
           Address.SetClass(buf, 0);
-          a1 = new AHAddress( MemBlock.Reference(buf, 0, buf.Length) );
-        }
-        else {
-          //Get a random connection:
-          Connection c_r = tab.GetRandom(ConnectionType.Structured);
-          a1 = (AHAddress)c_r.Address;
-        }
+          a1 = new AHAddress( MemBlock.Copy(buf, 0, buf.Length) );
         //Do the same for a2:
-        if( r.Next(2) == 0 ) {
-          byte[] buf = new byte[ Address.MemSize ];
           r.NextBytes(buf);
           Address.SetClass(buf, 0);
           a2 = new AHAddress( MemBlock.Reference(buf, 0, buf.Length) );
-        }
-        else {
-          //Get a random connection:
-          Connection c_r = tab.GetRandom(ConnectionType.Structured);
-          a2 = (AHAddress)c_r.Address;
-        }
         //Now do some checks:
-        int r_c = tab.RightInclusiveCount(a1, a2);
-        int l_c = tab.LeftInclusiveCount(a1, a2);
+        var structs = tab.State.GetConnections(ConnectionType.Structured);
+        int r_c = structs.RightInclusiveCount(a1, a2);
+        int l_c = structs.LeftInclusiveCount(a1, a2);
         //Now manually count them:
         int r_c_manual = 0;
         int l_c_manual = 0;
         int iterated = 0;
-        foreach(Connection c in tab) {
+        foreach(Connection c in tab.State) {
           AHAddress a3 = (AHAddress)c.Address;
           if( a3.IsBetweenFromLeft(a1, a2) ) {
             l_c_manual++;
@@ -1730,47 +1383,42 @@ namespace Brunet.Connections
         Assert.AreEqual(r_c, r_c_manual, "RightInclusive test");
         Assert.AreEqual(l_c, l_c_manual, "LeftInclusive test");
         //Check symmetry:
-        int r_c2 = tab.RightInclusiveCount(a2, a1);
-        int l_c2 = tab.LeftInclusiveCount(a2, a1);
+        int r_c2 = structs.RightInclusiveCount(a2, a1);
+        int l_c2 = structs.LeftInclusiveCount(a2, a1);
         //Console.Error.WriteLine("LIC(a,b): {0}, RIC(b,a): {1}", l_c2, r_c);
         Assert.AreEqual(l_c, r_c2, "RIC(a2, a1) == LIC(a1, a2)");
         Assert.AreEqual(r_c, l_c2, "LIC(a2, a1) == RIC(a1, a2)");
         }
         //Do some removals:
-        while(tab.Count(ConnectionType.Structured) > 0) {
+        while(tab.State.GetConnections(ConnectionType.Structured).Count > 0) {
+          var cts = tab.State;
           //Check that the table is sorted:
           Address last_a = null;
-          foreach(Connection cn in tab.GetConnections(ConnectionType.Structured)) {
+          foreach(Connection cn in cts.GetConnections(ConnectionType.Structured)) {
             if( last_a != null ) {
               Assert.IsTrue( last_a.CompareTo( cn.Address ) < 0, "Sorted table");
             }
             last_a = cn.Address;
           }
-          Connection c = tab.GetRandom(ConnectionType.Structured);
-          Assert.AreEqual( c, tab.GetConnection(c.Edge), "Edge lookup");
-          Assert.AreEqual( tab.GetConnection(c.Edge),
-                           tab.GetConnection(ConnectionType.Structured, c.Address),
-                           "Edge equals Address lookup");
-          //Check to see that UpdateStatus basically works
-          Connection c2 = tab.UpdateStatus(c, null);
-          Assert.AreEqual( c2, tab.GetConnection(c.Edge), "Edge lookup");
-          Assert.AreEqual( tab.GetConnection(c.Edge),
-                           tab.GetConnection(ConnectionType.Structured, c.Address),
+          //Look at the first connection:
+          Connection c = cts.GetConnections(ConnectionType.Structured)[0];
+          Assert.AreEqual( c, cts.GetConnection(c.State.Edge), "Edge lookup");
+          Assert.AreEqual( cts.GetConnection(c.State.Edge),
+                           cts.GetConnections(ConnectionType.Structured)[c.Address],
                            "Edge equals Address lookup");
 
-          int before = tab.Count(ConnectionType.Structured);
-          int uc_count = tab.UnconnectedCount;
-          tab.Disconnect(c.Edge);
-          int after = tab.Count(ConnectionType.Structured);
-          int uc_count_a = tab.UnconnectedCount;
-          Assert.IsTrue( before == (after + 1), "Disconnect subtracted one");
-          Assert.IsTrue( uc_count == (uc_count_a - 1), "Disconnect added one _unconnected");
-          Assert.IsTrue( tab.IndexOf(ConnectionType.Structured, c.Address) < 0, "Removal worked");
-          Assert.IsNull( tab.GetConnection(c.Edge), "Connection is gone");
-          Assert.IsTrue( tab.IsUnconnected( c.Edge ), "Edge is _unconnected" );
-          c.Edge.Close(); //Should trigger removal completely:
-          Assert.IsFalse( tab.IsUnconnected( c.Edge ), "Edge is completely gone");
-          Assert.IsNull( tab.GetConnection( c.Edge ), "Connection is still gone");
+          int before = cts.GetConnections(ConnectionType.Structured).Count;
+          int uc_count = cts.Unconnected.Count;
+          c.State.Edge.Close();
+          cts = tab.State;
+          int after = cts.GetConnections(ConnectionType.Structured).Count;
+          int uc_count_a = cts.Unconnected.Count;
+          Assert.AreEqual( before, (after + 1), "Disconnect subtracted one");
+          Assert.AreEqual( uc_count, uc_count_a, "Disconnect added one _unconnected");
+          Assert.IsTrue( cts.GetConnections(ConnectionType.Structured).IndexOf(c.Address) < 0, "Removal worked");
+          Assert.IsNull( cts.GetConnection(c.State.Edge), "Connection is gone");
+          Assert.IsTrue( !cts.Unconnected.Contains(c.State.Edge), "Edge is _unconnected" );
+          Assert.IsNull( cts.GetConnection( c.State.Edge ), "Connection is still gone");
         }
       }
     }

@@ -47,7 +47,7 @@ namespace Brunet.Transport
     /// whether or not to use delays, set in the constructor
     protected bool _use_delay;
     protected long _bytes = 0;
-    public override long BytesSent { get { return _bytes; } }
+    public long BytesSent { get { return _bytes; } }
 
     ///<summary>Map EL id to EL.</summary>
     static protected Dictionary<int, SimulationEdgeListener> _listener_map;

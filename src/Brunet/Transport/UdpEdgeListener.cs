@@ -23,16 +23,18 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 */
 
+using Brunet;
+using Brunet.Concurrent;
+using Brunet.Collections;
+using Brunet.Util;
 using System;
 using System.IO;
 using System.Threading;
 using System.Net.Sockets;
 using System.Net;
 using System.Collections;
+using System.Collections.Generic;
 
-using Brunet.Concurrent;
-using Brunet.Messaging;
-using Brunet.Util;
 namespace Brunet.Transport
 {
   /**
@@ -46,68 +48,696 @@ namespace Brunet.Transport
    */
   public class UdpEdgeListener : EdgeListener, IEdgeSendHandler
   {
-    protected long _bytes = 0;
-    public override long BytesSent { get { return _bytes; } }
-
-    /*
-     * This is the object which we pass to UdpEdges when we create them.
-     */
-    protected IEdgeSendHandler _send_handler;
-    /**
-     * Hashtable of ID to Edges
-     */
-    protected Hashtable _id_ht;
-    protected Hashtable _remote_id_ht;
-
-    protected Random _rand;
-
-    protected IEnumerable _tas;
-    protected NatHistory _nat_hist;
-    protected IEnumerable _nat_tas;
-    public override IEnumerable LocalTAs
-    {
-      get
-      {
-        return _nat_tas;
-      }
-    }
-
-    public override TransportAddress.TAType TAType
-    {
-      get
-      {
-        return TransportAddress.TAType.Udp;
-      }
-    }
-
-    // _id_ht is a mapping of ids to edges
-    public override int Count { get { return _id_ht.Count; } }
-
-    ///used for thread for the socket synchronization
-    protected readonly object _sync;
-    protected readonly ManualResetEvent _listen_finished_event;
-    protected int _running;
-    protected int _isstarted;
-    public override bool IsStarted
-    {
-      get { return 1 == _isstarted; }
-    }
-
-    protected int _port;
-    //This is our best guess of the local endpoint
-    protected IPEndPoint _local_ep {
-      get {
-        return GuessLocalEndPoint(_tas); 
-      }
-    }
-    public IPEndPoint LocalEndPoint { get { return _local_ep; } }
-
-    protected enum ControlCode : int
-    {
+    /////////
+    // Inner classes
+    /////////
+    protected enum ControlCode : int {
       EdgeClosed = 1,
       EdgeDataAnnounce = 2, ///Send a dictionary of various data about the edge
       Null = 3 ///This is a null message, it means just ignore the packet
     }
+
+    /*
+     * Holds the information needed to send a packet
+     * to make sure only one Send happens at a time
+     * READ THIS: Linux sometimes blocks for seconds on UDP send
+     * if the sends are not in their own thread, that blocks the whole
+     * system.
+     */
+    protected sealed class SendState {
+      public readonly int LocalID;
+      public readonly int RemoteID;
+      public readonly ICopyable Data;
+      public readonly EndPoint End;
+      public SendState(int l, int r, ICopyable d, EndPoint e) {
+        LocalID = l;
+        RemoteID = r;
+        Data = d;
+        End = e;
+      }
+    }
+  
+    /**
+     * Ensures that only one write is happening at a time without locks.
+     * READ THIS: Linux sometimes blocks for seconds on UDP send
+     * if the sends are not in their own thread, that blocks the whole
+     * system.  IF you decide to change this, REMEMBER!
+     */
+    protected sealed class SendServer {
+      private readonly Socket _socket;
+      private readonly byte[] _buffer;
+      private readonly LFBlockingQueue<SendState> _queue;
+      private readonly int MAX = 512;
+      public SendServer(Socket s, byte[] buffer) {
+        _socket = s;
+        _buffer = buffer;
+        _queue = new LFBlockingQueue<SendState>();
+      }
+      public bool Add(SendState ss) {
+        if( _queue.Count < MAX ) {
+          _queue.Enqueue(ss);
+          return true;
+        }
+        else {
+          return false;
+        }
+      }
+      public void Run() {
+        bool got;
+        SendState ss = _queue.Dequeue(-1, out got);
+        while( null != ss ) {
+          Serve(ss);
+          ss = _queue.Dequeue(-1, out got);
+        }
+      }
+      public void Stop() {
+        _queue.Enqueue(null);
+      }
+      //This method should never throw an exception
+      private void Serve(SendState state) {
+        //Write the IDs of the edge:
+        //[local id 4 bytes][remote id 4 bytes][packet]
+        try {
+          NumberSerializer.WriteInt(state.LocalID, _buffer, 0);
+          NumberSerializer.WriteInt(state.RemoteID, _buffer, 4);
+          int plength = state.Data.CopyTo(_buffer, 8);
+          _socket.SendTo(_buffer, 8 + plength, SocketFlags.None, state.End);
+        }
+        catch(System.ObjectDisposedException) {
+          //This happens when the _socket is closed by the listen thread
+        }
+        catch(Exception x) {
+          if(ProtocolLog.Exceptions.Enabled) {
+            ProtocolLog.Write(ProtocolLog.Exceptions, x.ToString());
+          }
+        }
+      }
+    }
+    /** Holds any extra information we need to keep for each Edge
+     * in the future, this may hold information needed to manage
+     * timing the edge out, etc...
+     */
+    protected sealed class EdgeState {
+      public readonly UdpEdge Edge;
+      public EdgeState(UdpEdge e) {
+        if( e == null ) {
+          throw new ArgumentNullException("Edge cannot be null in EdgeState");
+        }
+        Edge = e;
+      }
+    }
+
+    /** Here is all the mutable state information for the EdgeListener
+     * All instances of this will be kept in the ListenThread so
+     * there is no need for thread-safety here.
+     */
+    protected sealed class ListenerState {
+      public readonly UidGenerator<EdgeState> LocalIdTab;
+      public readonly Dictionary<int, List<EdgeState> > RemoteIdTab;
+      public readonly UdpEdgeListener EL;
+      public TAAuthorizer TAAuth;
+
+      //Private data:
+      private EndPoint End;
+      private readonly Socket Sock;
+      private readonly BufferAllocator BA;
+      //Used to keep track of recently used ids
+      private const int ID_HISTORY_SIZE = 32;
+      //Combine 32bit local | 32bit remote into a long:
+      private readonly long[] _recently_used_id;
+      private int _rulid_ptr;
+
+      public ListenerState(UdpEdgeListener el, Socket s, TAAuthorizer taa) {
+        EL = el;
+        Sock = s;
+        TAAuth = taa;
+        End = new IPEndPoint(IPAddress.Any, 0);
+        BA = new BufferAllocator(8 + Int16.MaxValue);
+        //Don't allocate negative local IDs:
+        var rand = new SecureRandom();
+        LocalIdTab = new UidGenerator<EdgeState>(rand, true);
+        RemoteIdTab = new Dictionary<int, List<EdgeState> >();
+        _rulid_ptr = 0;
+        _recently_used_id = new long[ID_HISTORY_SIZE];
+      }
+      //Call this when we close an edge to remember we used the ID recently:
+      private void AddIDToHist(int localid, int remoteid) {
+        long long_local = (long)localid;
+        long id = (long_local << 32) | remoteid;
+        _recently_used_id[ _rulid_ptr ] = id;
+        _rulid_ptr = (_rulid_ptr + 1) % ID_HISTORY_SIZE;
+      }
+      private void AddRemoteTab(EdgeState es) {
+        int remoteid = es.Edge.RemoteID;
+        List<EdgeState> remotes;
+        if( false == RemoteIdTab.TryGetValue(remoteid, out remotes) ) {
+          //First one of this id:
+          remotes = new List<EdgeState>();
+          RemoteIdTab.Add(remoteid, remotes);
+        }
+        remotes.Add(es);
+      }
+      //TODO we need to think about security more here: 
+      private bool CheckEndValidity(UdpEdge edge) {
+        if( edge.End.Equals(End) ) {
+          //Usual case:
+          return true;
+        }
+        else {
+          /*
+           * This is either legitimate: due to mobility/NAT change
+           * or an attack and it is session hijacking.  Now, we
+           * assume all is good.  It would probably be better not
+           * to be so trusting.
+           * TODO one idea: ping the old edge.End and see if someone responds quickly
+           * if so, assume this is an attack ignore the mapping change, if not, assume
+           * all is good, and accept the mapping change
+           */
+          if(ProtocolLog.UdpEdge.Enabled) {
+            ProtocolLog.Write(ProtocolLog.UdpEdge, String.Format(
+              "Remote NAT Mapping changed on Edge: {0}\n{1} -> {2}",
+              edge, edge.End, End)); 
+          }
+          //Actually update:
+          var rta = TransportAddressFactory.CreateInstance(TransportAddress.TAType.Udp,(IPEndPoint)End);
+          if( TAAuth.Authorize(rta) != TAAuthorizer.Decision.Deny ) {
+            IPEndPoint this_end = (IPEndPoint)End;
+            /*
+             * .Net overwrites the End variable (passed by ref) into the Socket
+             * we explicitly copy here to make it clear that the End can't change
+             * by being passed to the socket
+             */
+            edge.End = new IPEndPoint(this_end.Address, this_end.Port);
+            var dp = new RemoteMappingChangePoint(DateTime.UtcNow, edge);
+            EL._pub_state.Update(new AddNatData(dp));
+            //Tell the other guy:
+            EL.SendControlPacket(edge, End, edge.RemoteID, edge.ID, ControlCode.EdgeDataAnnounce);
+            return true;
+          }
+          else {
+            /*
+             * Looks like the new TA is no longer authorized.
+             * //TODO SECURITY:
+             * If someone sends a packet from a unauthorized TA with the matching local/remoteid
+             * they can close the edge.
+             */
+            EL.SendControlPacket(edge, End, edge.RemoteID, edge.ID, ControlCode.EdgeClosed);
+            EL.RequestClose(edge);
+            RemoveEdge(edge);
+            return false;
+          }
+        }
+      }
+      private bool IDWasRecent(int localid, int remoteid) {
+        long long_local = (long)localid;
+        long id = (long_local << 32) | remoteid;
+        //Look backwards through the list to hopefully hit more recent first
+        int cnt = ID_HISTORY_SIZE;
+        int pos = _rulid_ptr;
+        while(cnt-- > 0) {
+          pos = pos == 0 ? ID_HISTORY_SIZE - 1 : pos - 1;
+          if( id == _recently_used_id[ pos ] ) {
+            return true;
+          }
+        }
+        //Wasn't any of these
+        return false;
+      }
+
+      public void CloseAllEdges() {
+        foreach(var edgestate in LocalIdTab) {
+          EL.RequestClose(edgestate.Edge); 
+        }
+      }
+      public UdpEdge CreateEdge(int remoteid, IPEndPoint end) {
+        bool is_incoming = (remoteid != 0);
+        var id_edge = LocalIdTab.GenerateID(delegate(int id) {
+          UdpEdge ue = new UdpEdge(EL, is_incoming, end, EL.LocalEndPoint, id, remoteid);
+          /* Tell me when you close so I can clean up the table */
+          ue.CloseEvent += EL.CloseHandler;
+          return new EdgeState(ue);
+        });
+        UdpEdge new_e = id_edge.Second.Edge;
+        if( is_incoming ) {
+          AddRemoteTab(id_edge.Second);
+        } 
+        EL._pub_state.UpdateSeq(
+          new IncEdgeCount(), 
+          new AddNatData(new NewEdgePoint(DateTime.UtcNow, new_e))
+        );
+        return new_e;
+      }
+
+      private void HandleControlPacket(EdgeState es, int rec_bytes)
+      {
+        UdpEdge e = es.Edge;
+        try {
+          ControlCode code = (ControlCode)NumberSerializer.ReadInt(BA.Buffer, BA.Offset + 8);
+          //4+4 (remote + local id) + 4 (control code) = 12 bytes to skip
+          var control_payload = MemBlock.Reference(BA.Buffer, BA.Offset + 12, rec_bytes - 12);
+          if(ProtocolLog.UdpEdge.Enabled)
+            ProtocolLog.Write(ProtocolLog.UdpEdge, String.Format(
+              "Got control {1} from: {0}", e, code));
+          if( code == ControlCode.EdgeClosed ) {
+            //The edge has been closed on the other side
+            EL.RequestClose(e);
+            RemoveEdge(e);
+          }
+          else if( code == ControlCode.EdgeDataAnnounce ) {
+            //our NAT mapping may have changed:
+            var info = (IDictionary)AdrConverter.Deserialize( control_payload );
+            var our_local_ta = (string)info["RemoteTA"]; //his remote is our local
+            if( our_local_ta != null ) {
+              //Update our list:
+              var new_ta = TransportAddressFactory.CreateInstance(our_local_ta);
+              var old_ta = e.PeerViewOfLocalTA;
+              if( ! new_ta.Equals( old_ta ) ) {
+                if(ProtocolLog.UdpEdge.Enabled)
+                  ProtocolLog.Write(ProtocolLog.UdpEdge, String.Format(
+                    "Local NAT Mapping changed on Edge: {0}\n{1} => {2}",
+                 e, old_ta, new_ta));
+                //Looks like matters have changed:
+                EL.UpdateLocalTAs(e, new_ta);
+                /**
+                 * @todo, maybe we should ping the other edges sharing this
+                 * EndPoint, but we need to be careful not to do some O(E^2)
+                 * operation, which could easily happen if each EdgeDataAnnounce
+                 * triggered E packets to be sent
+                 */
+              }
+            }
+          }
+          else if( code == ControlCode.Null ) {
+            //Do nothing in this case
+          }
+        }
+        catch(Exception x) {
+        //This could happen if this is some control message we don't understand
+          if(ProtocolLog.Exceptions.Enabled)
+            ProtocolLog.Write(ProtocolLog.Exceptions, x.ToString());
+        }
+      }
+      private void HandleDataPacket(EdgeState es, int rec_bytes) {
+        UdpEdge e = es.Edge;
+        if( CheckEndValidity(e) ) {
+          //This is the normal case, a packet for us
+          try {
+            e.ReceivedPacketEvent(TakePacket(rec_bytes));
+          }
+          catch(EdgeClosedException) {
+            RemoveEdge(e);
+            EL.SendControlPacket(e, End, e.RemoteID, e.ID, ControlCode.EdgeClosed);
+          }
+        }
+        //else: We just ignore this...
+      }
+      private void HandleMismatch(int local, int remote, int rec_bytes) {
+        if( local < 0 ) { local = ~local; }
+        if( IDWasRecent(local, remote) ) {
+          /* Only send this message for recently closed edges.  This should
+           * is here to prevent:
+           * 1) port scanning: we will ignore packets that don't look like existing or new edges
+           * 2) forged UDP packets could cause us to be a DDOS machine for evil nodes: they
+           *    send our machines bad packets with forged headers, we send a response to an innocent party
+           */
+          EL.SendControlPacket(null, End, remote, local, ControlCode.EdgeClosed);
+        }
+      }
+      private void HandleNewEdgeReq(int remoteid, int rec_bytes) {
+        /*
+         * We copy the endpoint because (I think) .Net
+         * overwrites it each time.  Since making new
+         * edges is rare, this is better than allocating
+         * a new endpoint each time
+         */
+        IPEndPoint this_end = (IPEndPoint)End;
+        IPEndPoint my_end = new IPEndPoint(this_end.Address,
+                                           this_end.Port);
+        UdpEdge e = CreateEdge(remoteid, my_end);
+        try {
+          EL.SendEdgeEvent(e);
+          e.ReceivedPacketEvent(TakePacket(rec_bytes));
+        }
+        catch {
+          RemoveEdge(e);
+          EL.SendControlPacket(e, End, remoteid, 0, ControlCode.EdgeClosed);
+        }
+      }
+      /**
+       * This is a System.Threading.ThreadStart delegate
+       * We loop waiting for edges that need to send,
+       * or data on the socket.
+       *
+       * This is the only thread that can touch the socket,
+       * therefore, we do not need to lock the socket.
+       */
+      public void ListenThread()
+      {
+        Thread.CurrentThread.Name = "udp_listen_thread";
+        var ps = EL._pub_state; 
+        
+        //Variables to track logging:
+        DateTime last_debug = DateTime.UtcNow;
+        DateTime now;
+        int debug_period = 5000;
+        bool logging = ProtocolLog.Monitor.Enabled;
+  
+        //Here is the local-state-only model for threading:
+        ImmutableList<IListenerAction> act_stack;
+        //Here is the action loop:
+        while(ps.State.RunState == 1) {
+          if(logging) {
+            now = DateTime.UtcNow;
+            if(last_debug.AddMilliseconds(debug_period) < now) {
+              last_debug = now;
+              ProtocolLog.Write(ProtocolLog.Monitor, String.Format("I am alive: {0}", now));
+            }
+          }
+          try {
+            ProcessNextPacket();
+            //See if there are any pending actions to take:
+            while( EL._actions.TryPop(out act_stack) ) {
+              //Process the head:
+              act_stack.Head.Start(this);
+            }
+            //The action stack is empty, let's wait for the next packet or action
+          }
+          catch(SocketException sx) {
+            /*
+             * Socket exceptions sometimes happen on nodes with poorly configured IP
+             * or other kernel problems.  We probably don't want to stop running on
+             * that case, so we just print the exception and continue
+             */
+            if((ps.State.RunState == 1) && ProtocolLog.Exceptions.Enabled) {
+              ProtocolLog.Write(ProtocolLog.Exceptions, sx.ToString());
+            }
+          }
+          catch(Exception x) {
+            /*
+             * This is never expected.  Let's print the exception and quit
+             */
+            Console.Error.WriteLine(
+              "Exception in UdpEdgeListener(port={0}).ListenThread: {1}", EL._port, x
+            );
+            ps.Update(new StopUpdater());
+          }
+        }
+        CloseAllEdges();
+        Sock.Close();
+        ps.Update(new Finish());
+      }
+      public void ProcessNextPacket() {
+        int rec_bytes = Sock.ReceiveFrom(BA.Buffer, BA.Offset, BA.Capacity,
+                                         SocketFlags.None, ref End);
+        if( rec_bytes > 8 ) {
+          int remoteid = NumberSerializer.ReadInt(BA.Buffer, BA.Offset);
+          int localid = NumberSerializer.ReadInt(BA.Buffer, BA.Offset + 4);
+
+          EdgeState es;
+          if( LocalIdTab.TryGet(localid, out es) ) {
+            //This is the most common case, so try it first
+            UdpEdge e = es.Edge;
+            int old_rem = e.TrySetRemoteID(remoteid);
+            if( old_rem == remoteid ) {
+              HandleDataPacket(es, rec_bytes);
+            }
+            else if( old_rem == 0 ) {
+              //This is the first packet we've heard from our edge creation!
+              AddRemoteTab(es);
+              HandleDataPacket(es, rec_bytes);
+            }
+            else {
+              //remoteid does not match:
+              HandleMismatch(localid, remoteid, rec_bytes);
+            }
+          }
+          else if( localid == 0 ) {
+            //This is a special id to request a new edge
+            HandleNewEdgeReq(remoteid, rec_bytes);
+          }
+          else if( localid < 0 ) {
+            //This is a control message
+            int plocalid = ~localid;
+            bool have_edge = LocalIdTab.TryGet(plocalid, out es);
+            if( have_edge ) {
+              int old_rem = es.Edge.TrySetRemoteID(remoteid);
+              if( old_rem == remoteid ) { 
+                HandleControlPacket(es, rec_bytes);
+              }
+              else if( old_rem == 0 ) {
+                AddRemoteTab(es);
+                HandleControlPacket(es, rec_bytes);
+              }
+              else {
+                //remoteid doesn't match
+                HandleMismatch(localid, remoteid, rec_bytes);
+              } 
+            }
+            else {
+              //No such local id:
+              HandleMismatch(localid, remoteid, rec_bytes);
+            }
+          }
+          else {
+            //localid > 0, but we don't know about it:
+            HandleMismatch(localid, remoteid, rec_bytes);
+          }
+        }
+        //else we didn't receive enough to be meaningful
+      }
+      public void RemoveEdge(UdpEdge e) {
+          EdgeState es;
+          if( LocalIdTab.TryTake( e.ID, out es ) ) {
+            //Now record the ID in our recent history:
+            int rem = e.RemoteID;
+            AddIDToHist(e.ID, rem);
+            List<EdgeState> remotes;
+            if( RemoteIdTab.TryGetValue(rem, out remotes) ) {
+              remotes.Remove(es);
+              if( remotes.Count == 0 ) {
+                //Clean up:
+                RemoteIdTab.Remove(rem);
+              }
+            }
+            EL._pub_state.UpdateSeq(
+              new DecEdgeCount(), 
+              new AddNatData( new EdgeClosePoint(DateTime.UtcNow, e))
+            );
+          }
+          //else: This edge has already been closed
+      }
+      /** Advance the buffer and return the packet
+       * @param rec_bytes the total number of bytes received (including id bytes)
+       */
+      private MemBlock TakePacket(int rec_bytes) {
+        var packet_buffer = MemBlock.Reference(BA.Buffer, BA.Offset + 8, rec_bytes - 8);
+        BA.AdvanceBuffer(rec_bytes);
+        return packet_buffer;
+      }
+    }
+    
+    /**
+     * Here are all the ways we can modify the ListenerState
+     * These are actions initiated OUTSIDE the ListenThread.
+     * The listen thread can just call methods on ListenerState
+     * directly.
+     */
+    protected interface IListenerAction {
+      void Start(ListenerState la);
+    }
+
+    protected class SetAuthAction : IListenerAction {
+      readonly TAAuthorizer TAA;
+      public SetAuthAction(TAAuthorizer taa) {
+        TAA = taa;
+      }
+      public void Start(ListenerState ls) {
+        ls.TAAuth = TAA;
+        var bad_edges = new List<UdpEdge>();
+        foreach(EdgeState es in ls.LocalIdTab) {
+          if( TAA.Authorize( es.Edge.RemoteTA ) == TAAuthorizer.Decision.Deny ) {
+            bad_edges.Add(es.Edge);
+          }
+        }
+        //Close the newly bad Edges.
+        foreach(UdpEdge e in bad_edges) {
+          ls.EL.RequestClose(e);
+          ls.RemoveEdge(e);
+        }
+      }
+    }
+    protected class CloseAction : IListenerAction {
+      public readonly UdpEdge Edge;
+      public CloseAction(UdpEdge e) {
+        Edge = e;
+      }
+      public void Start(ListenerState ls) {
+        ls.RemoveEdge(Edge);
+      }
+    }
+    protected class CreateAction : IListenerAction {
+      public readonly EdgeCreationCallback ECB;
+      public readonly TransportAddress TA;
+      public CreateAction(TransportAddress ta, EdgeCreationCallback ecb) {
+        TA = ta;
+        ECB = ecb;
+      }
+      public void Start(ListenerState ls) {
+        UdpEdge new_e = null;
+        Exception ex = null;
+        bool success;
+        try {
+          if( ls.TAAuth.Authorize(TA) == TAAuthorizer.Decision.Deny ) {
+            //Too bad.  Can't make this edge:
+	    throw new EdgeException( TA.ToString() + " is not authorized");
+          }
+          IPAddress first_ip = ((IPTransportAddress) TA).GetIPAddress();
+          var end = new IPEndPoint(first_ip, ((IPTransportAddress) TA).Port);
+          //remote id is zero on a newly created edge
+          new_e = ls.CreateEdge(0, end);
+          success = true;
+        } 
+        catch(Exception x) {
+          ex = x;
+          success = false;
+        }
+        ECB(success, new_e, ex);
+      }
+    }
+    /*
+     * This does nothing an is only used to wake up the 
+     * the listen thread when we stop
+     */
+    protected sealed class NullAction : IListenerAction {
+      public void Start(ListenerState ls) { }
+    }
+
+    /** This is the immutable state that can be publicly read.
+     */
+    protected sealed class PublicState {
+      public readonly NatHistory NatHist;
+      public readonly IEnumerable NatTAs;
+      public readonly IEnumerable TAs;
+      public readonly int EdgeCount;
+      /* 0 -> not started
+       * 1 -> started and running
+       * 2 -> started then stopped
+       * 3 -> the listen thread has finished
+       */
+      public readonly int RunState; 
+      public PublicState(NatHistory nh, IEnumerable nt, IEnumerable tas, int edgecnt, int runs) {
+        NatHist = nh;
+        NatTAs = nt;
+        TAs = tas;
+        EdgeCount = edgecnt;
+        RunState = runs;
+      }
+    }
+    // Here all all the ways we can modify the PublicState
+    protected sealed class IncEdgeCount : Mutable<PublicState>.Updater {
+      public PublicState ComputeNewState(PublicState ps) {
+        return new PublicState(ps.NatHist, ps.NatTAs, ps.TAs,
+                               ps.EdgeCount + 1, ps.RunState);
+      }
+    }
+    protected sealed class DecEdgeCount : Mutable<PublicState>.Updater {
+      public PublicState ComputeNewState(PublicState ps) {
+        return new PublicState(ps.NatHist, ps.NatTAs, ps.TAs,
+                               ps.EdgeCount - 1, ps.RunState);
+      }
+    }
+    protected sealed class Finish : Mutable<PublicState>.Updater {
+      public PublicState ComputeNewState(PublicState ps) {
+        if( ps.RunState >= 1 ) {
+          return new PublicState(ps.NatHist, ps.NatTAs, ps.TAs,
+                                 ps.EdgeCount, 3);
+        }
+        else {
+          throw new Exception("Can't finish before we start");
+        }
+      }
+    }
+    protected sealed class StartUpdater : Mutable<PublicState>.Updater {
+      public PublicState ComputeNewState(PublicState ps) {
+        if( ps.RunState == 0 ) {
+          return new PublicState(ps.NatHist, ps.NatTAs, ps.TAs,
+                                 ps.EdgeCount, 1);
+        }
+        else {
+          throw new Exception("UdpEdgeListener Restart not allowed");
+        }
+      }
+    }
+    protected sealed class StopUpdater : Mutable<PublicState>.Updater {
+      public PublicState ComputeNewState(PublicState ps) {
+        if( ps.RunState == 1 ) {
+          return new PublicState(ps.NatHist, ps.NatTAs, ps.TAs,
+                                 ps.EdgeCount, 2);
+        }
+        else if( ps.RunState == 2) { 
+          //We are calling stop a second time, idempotent:
+          return ps;
+        }
+        else {
+          throw new Exception("UdpEdgeListener not yet started: " + ps.RunState.ToString());
+        }
+      }
+    }
+    protected sealed class AddNatData : Mutable<PublicState>.Updater {
+      public readonly NatDataPoint NDP;
+      public AddNatData(NatDataPoint ndp) {
+        NDP = ndp;
+      }
+      public PublicState ComputeNewState(PublicState ps) {
+        NatHistory new_nh = ps.NatHist + NDP;
+        NatTAs new_nta = new NatTAs(ps.TAs, new_nh);
+        return new PublicState(new_nh, new_nta, ps.TAs,
+                               ps.EdgeCount, ps.RunState);
+      }
+    }
+
+    /////////
+    // Member Variables 
+    /////////
+
+    /*
+     * NOTE: all of these are readonly, we never change any
+     * of these references.  The socket is not thread-safe, 
+     * but we use the SendServer and the ListenerState to modify
+     * it.
+     */
+    private readonly SendServer _send_server;
+    private readonly Mutable<PublicState> _pub_state;
+    private readonly LockFreeStack<IListenerAction> _actions;
+    protected readonly Thread _listen_thread;
+    protected readonly int _port;
+    protected readonly IPEndPoint LocalEP; 
+    
+    /////////
+    // Properties
+    /////////
+
+    public override IEnumerable LocalTAs {
+      get {
+        return _pub_state.State.NatTAs;
+      }
+    }
+
+    public override TransportAddress.TAType TAType {
+      get {
+        return TransportAddress.TAType.Udp;
+      }
+    }
+
+    public override int Count { get { return _pub_state.State.EdgeCount; } }
+
+    public override bool IsStarted {
+      get { return _pub_state.State.RunState >= 1; }
+    }
+
+    //This is our best guess of the local endpoint
+    public IPEndPoint LocalEndPoint { get { return GuessLocalEndPoint(_port, _pub_state.State.TAs); } }
+
 
     override public TAAuthorizer TAAuth {
       /**
@@ -116,378 +746,14 @@ namespace Brunet.Transport
        * close them
        */
       set {
-        ArrayList bad_edges = new ArrayList();
-        lock( _id_ht ) {
-          _ta_auth = value;
-          IDictionaryEnumerator en = _id_ht.GetEnumerator();
-          while( en.MoveNext() ) {
-            Edge e = (Edge)en.Value;
-            if( _ta_auth.Authorize( e.RemoteTA ) == TAAuthorizer.Decision.Deny ) {
-              bad_edges.Add(e);
-            }
-          }
-        }
-        //Close the newly bad Edges.
-        foreach(Edge e in bad_edges) {
-          RequestClose(e);
-          CloseHandler(e, null);
-        }
+        //Next time we receive a packet we'll update:
+        _actions.Push(new SetAuthAction(value));
       }
     }
     
-    /**
-     * When a UdpEdge closes we need to remove it from
-     * our table, so we will know it is new if it comes
-     * back.
-     */
-    public void CloseHandler(object edge, EventArgs args)
-    {
-      UdpEdge e = (UdpEdge)edge;
-      lock( _id_ht ) {
-        if( _id_ht.Contains( e.ID ) ) {
-          _id_ht.Remove( e.ID );
-          object re = _remote_id_ht[ e.RemoteID ];
-          if( re == e ) {
-            //_remote_id_ht only keeps track of incoming edges,
-            //so, there could be two edges with the same remoteid
-            //that are not equivalent.
-            _remote_id_ht.Remove( e.RemoteID );
-          }
-          NatDataPoint dp = new EdgeClosePoint(DateTime.UtcNow, e);
-          Interlocked.Exchange<NatHistory>(ref _nat_hist, _nat_hist + dp);
-          Interlocked.Exchange<IEnumerable>(ref _nat_tas, new NatTAs( _tas, _nat_hist ));
-        }
-      }
-    }
-
-    protected IPEndPoint GuessLocalEndPoint(IEnumerable tas) {
-      IPAddress ipa = IPAddress.Loopback;
-      bool stop = false;
-      int port = _port;
-      foreach(TransportAddress ta in tas) {
-        ArrayList ips = new ArrayList();
-	try {
-	  IPAddress a = ((IPTransportAddress) ta).GetIPAddress();
-	  ips.Add(a);
-	} catch (Exception x) {
-          ProtocolLog.WriteIf(ProtocolLog.Exceptions, String.Format(
-            "{0}", x));
-	}
-        port = ((IPTransportAddress) ta).Port;
-        foreach(IPAddress ip in ips) {
-          byte[] addr = ip.GetAddressBytes();
-          bool any_addr = ((addr[0] | addr[1] | addr[2] | addr[3]) == 0);
-          if( !IPAddress.IsLoopback(ip) && !any_addr ) {
-
-            ipa = ip;
-            stop = true;
-            break;
-          }
-        }
-        if( stop ) { break; }
-      }
-      //ipa, now holds our best guess for an endpoint..
-      return new IPEndPoint(ipa, port);
-    }
-    /**
-     * This handles lightweight control messages that may be sent
-     * by UDP
-     */
-    protected void HandleControlPacket(int remoteid, int n_localid,
-                                       MemBlock buffer, object state)
-    {
-      int local_id = ~n_localid;
-      UdpEdge e = _id_ht[local_id] as UdpEdge;
-      if(e == null) {
-        return;
-      }
-
-      if(e.RemoteID == 0) {
-        try {
-          e.RemoteID = remoteid;
-        } catch {
-          return;
-        }
-      }
-
-      if(e.RemoteID != remoteid) {
-        return;
-      }
-
-      try {
-        ControlCode code = (ControlCode)NumberSerializer.ReadInt(buffer, 0);
-        if(ProtocolLog.UdpEdge.Enabled)
-          ProtocolLog.Write(ProtocolLog.UdpEdge, String.Format(
-            "Got control {1} from: {0}", e, code));
-        if( code == ControlCode.EdgeClosed ) {
-          //The edge has been closed on the other side
-          RequestClose(e);
-          CloseHandler(e, null);
-        }
-        else if( code == ControlCode.EdgeDataAnnounce ) {
-          //our NAT mapping may have changed:
-          IDictionary info =
-            (IDictionary)AdrConverter.Deserialize( buffer.Slice(4) );
-          string our_local_ta = (string)info["RemoteTA"]; //his remote is our local
-          if( our_local_ta != null ) {
-            //Update our list:
-            TransportAddress new_ta = TransportAddressFactory.CreateInstance(our_local_ta);
-            TransportAddress old_ta = e.PeerViewOfLocalTA;
-            if( ! new_ta.Equals( old_ta ) ) {
-              if(ProtocolLog.UdpEdge.Enabled)
-                ProtocolLog.Write(ProtocolLog.UdpEdge, String.Format(
-                  "Local NAT Mapping changed on Edge: {0}\n{1} => {2}",
-               e, old_ta, new_ta));
-              //Looks like matters have changed:
-              this.UpdateLocalTAs(e, new_ta);
-              /**
-               * @todo, maybe we should ping the other edges sharing this
-               * EndPoint, but we need to be careful not to do some O(E^2)
-               * operation, which could easily happen if each EdgeDataAnnounce
-               * triggered E packets to be sent
-               */
-            }
-          }
-        }
-        else if( code == ControlCode.Null ) {
-          //Do nothing in this case
-        }
-      }
-      catch(Exception x) {
-      //This could happen if this is some control message we don't understand
-        if(ProtocolLog.Exceptions.Enabled)
-          ProtocolLog.Write(ProtocolLog.Exceptions, x.ToString());
-      }
-    }
-
-    /**
-     * This reads a packet from buf which came from end, with
-     * the given ids
-     */
-    protected void HandleDataPacket(int remoteid, int localid,
-                                    MemBlock packet, EndPoint end, object state)
-    {
-      bool read_packet = true;
-      bool is_new_edge = false;
-      //It is threadsafe to read from Hashtable
-      UdpEdge edge = (UdpEdge)_id_ht[localid];
-      if( localid == 0 ) {
-        //This is a potentially a new incoming edge
-        is_new_edge = true;
-
-        //Check to see if it is a dup:
-        UdpEdge e_dup = (UdpEdge)_remote_id_ht[remoteid];
-        if( e_dup != null ) {
-          //Lets check to see if this is a true dup:
-          if( e_dup.End.Equals( end ) ) {
-            //Same id from the same endpoint, looks like a dup...
-            is_new_edge = false;
-            //Reuse the existing edge:
-            edge = e_dup;
-          }
-          else {
-            //This is just a coincidence.
-          }
-        }
-        if( is_new_edge ) {
-          TransportAddress rta = TransportAddressFactory.CreateInstance(this.TAType,(IPEndPoint)end);
-          if( _ta_auth.Authorize(rta) == TAAuthorizer.Decision.Deny ) {
-            //This is bad news... Ignore it...
-            ///@todo perhaps we should send a control message... I don't know
-            is_new_edge= false;
-            read_packet = false;
-            if(ProtocolLog.UdpEdge.Enabled)
-              ProtocolLog.Write(ProtocolLog.UdpEdge, String.Format(
-                "Denying: {0}", rta));
-          }
-          else {
-            //We need to assign it a local ID:
-            lock( _id_ht ) {
-              /*
-               * Now we need to lock the table so that it cannot
-               * be written to by anyone else while we work
-               */
-              do {
-                localid = _rand.Next();
-                //Make sure not to use negative ids
-                if( localid < 0 ) { localid = ~localid; }
-              } while( _id_ht.Contains(localid) || localid == 0 );
-              /*
-               * We copy the endpoint because (I think) .Net
-               * overwrites it each time.  Since making new
-               * edges is rare, this is better than allocating
-               * a new endpoint each time
-               */
-              IPEndPoint this_end = (IPEndPoint)end;
-              IPEndPoint my_end = new IPEndPoint(this_end.Address,
-                                                 this_end.Port);
-              edge = new UdpEdge(_send_handler, true, my_end,
-                             _local_ep, localid, remoteid);
-              _id_ht[localid] = edge;
-              _remote_id_ht[remoteid] = edge;
-            }
-          }
-        }
-      }
-      else if ( edge == null ) {
-        /*
-         * This is the case where the Edge is not a new edge,
-         * but we don't know about it.  It is probably an old edge
-         * that we have closed.  We can ignore this packet
-         */
-        read_packet = false;
-         //Send a control packet
-        SendControlPacket(end, remoteid, localid, ControlCode.EdgeClosed, state);
-      }
-      else if ( edge.RemoteID == 0 ) {
-        /* This is the response to our edge creation */
-        edge.RemoteID = remoteid;
-      }
-      else if( edge.RemoteID != remoteid ) {
-        /*
-         * This could happen as a result of packet loss or duplication
-         * on the first packet.  We should ignore any packet that
-         * does not have both ids matching.
-         */
-        read_packet = false;
-         //Tell the other guy to close this ignored edge
-        SendControlPacket(end, remoteid, localid, ControlCode.EdgeClosed, state);
-        edge = null;
-      }
-      if( (edge != null) && !edge.End.Equals(end) ) {
-        //This happens when a NAT mapping changes
-        if(ProtocolLog.UdpEdge.Enabled)
-          ProtocolLog.Write(ProtocolLog.UdpEdge, String.Format(
-            "Remote NAT Mapping changed on Edge: {0}\n{1} -> {2}",
-            edge, edge.End, end)); 
-        //Actually update:
-        TransportAddress rta = TransportAddressFactory.CreateInstance(this.TAType,(IPEndPoint)end);
-        if( _ta_auth.Authorize(rta) != TAAuthorizer.Decision.Deny ) {
-          IPEndPoint this_end = (IPEndPoint) end;
-          edge.End = new IPEndPoint(this_end.Address, this_end.Port);
-          NatDataPoint dp = new RemoteMappingChangePoint(DateTime.UtcNow, edge);
-          Interlocked.Exchange<NatHistory>(ref _nat_hist, _nat_hist + dp);
-          Interlocked.Exchange<IEnumerable>(ref _nat_tas, new NatTAs( _tas, _nat_hist ));
-          //Tell the other guy:
-          SendControlPacket(end, remoteid, localid, ControlCode.EdgeDataAnnounce, state);
-        }
-        else {
-          /*
-           * Looks like the new TA is no longer authorized.
-           */
-          SendControlPacket(end, remoteid, localid, ControlCode.EdgeClosed, state);
-          RequestClose(edge);
-          CloseHandler(edge, null);
-        }
-      }
-      if( is_new_edge ) {
-        try {
-          NatDataPoint dp = new NewEdgePoint(DateTime.UtcNow, edge);
-          Interlocked.Exchange<NatHistory>(ref _nat_hist, _nat_hist + dp);
-          Interlocked.Exchange<IEnumerable>(ref _nat_tas, new NatTAs( _tas, _nat_hist ));
-          edge.CloseEvent += this.CloseHandler;
-          //If we make it here, the edge wasn't closed, go ahead and process it.
-          SendEdgeEvent(edge);
-          // Stun support
-          SendControlPacket(end, remoteid, localid, ControlCode.EdgeDataAnnounce, state);
-        }
-        catch {
-          //Make sure this edge is closed and we are done with it.
-          RequestClose(edge);
-          CloseHandler(edge, null);
-          read_packet = false;
-          //This was a new edge, so the other node has our id as zero, send
-          //with that localid:
-          SendControlPacket(end, remoteid, 0, ControlCode.EdgeClosed, state);
-        }
-      }
-      if( read_packet ) {
-        //We have the edge, now tell the edge to announce the packet:
-        try {
-          edge.ReceivedPacketEvent(packet);
-        }
-        catch(EdgeClosedException) {
-          SendControlPacket(end, remoteid, localid, ControlCode.EdgeClosed, state);
-          //Make sure we record that this edge has been closed
-          CloseHandler(edge, null);
-        }
-      }
-    }
-
-    /**
-     * When a new Connection is added, we may need to update the list
-     * of TAs to make sure it is not too long, and that the it is sorted
-     * from most likely to least likely to be successful
-     * @param e the new Edge
-     * @param ta the TransportAddress our TA according to our peer
-     */
-    public override void UpdateLocalTAs(Edge e, TransportAddress ta) {
-      if( e.TAType == this.TAType ) {
-        UdpEdge ue = (UdpEdge)e;
-        ue.PeerViewOfLocalTA = ta;
-        NatDataPoint dp = new LocalMappingChangePoint(DateTime.UtcNow, e, ta);
-        Interlocked.Exchange<NatHistory>(ref _nat_hist, _nat_hist + dp);
-        Interlocked.Exchange<IEnumerable>(ref _nat_tas, new NatTAs( _tas, _nat_hist ));
-      }
-    }
-
-    /**
-     * Implements the EdgeListener function to 
-     * create edges of this type.
-     */
-    public override void CreateEdgeTo(TransportAddress ta, EdgeCreationCallback ecb)
-    {
-      Edge e = null;
-      Exception ex = null;
-      if( !IsStarted ) {
-        ex = new EdgeException("UdpEdgeListener is not started");
-      } else if( ta.TransportAddressType != this.TAType ) {
-        ex = new EdgeException(ta.TransportAddressType.ToString()
-            + " is not my type: " + this.TAType.ToString() );
-      } else if( _ta_auth.Authorize(ta) == TAAuthorizer.Decision.Deny ) {
-        ex = new EdgeException( ta.ToString() + " is not authorized");
-      } else {
-        IPAddress first_ip = ((IPTransportAddress) ta).GetIPAddress();
-        IPEndPoint end = new IPEndPoint(first_ip, ((IPTransportAddress) ta).Port);
-        /* We have to keep our mapping of end point to edges up to date */
-        lock( _id_ht ) {
-          //Get a random ID for this edge:
-          int id;
-          do {
-            id = _rand.Next();
-	    //Make sure we don't have negative ids
-            if( id < 0 ) { id = ~id; }
-          } while( _id_ht.Contains(id) || id == 0 );
-          e = new UdpEdge(this, false, end, _local_ep, id, 0);
-          _id_ht[id] = e;
-        }
-        NatDataPoint dp = new NewEdgePoint(DateTime.UtcNow, e);
-        Interlocked.Exchange<NatHistory>(ref _nat_hist, _nat_hist + dp);
-        Interlocked.Exchange<IEnumerable>(ref _nat_tas, new NatTAs( _tas, _nat_hist ));
-
-        try {
-          /* Tell me when you close so I can clean up the table */
-          e.CloseEvent += this.CloseHandler;
-        } catch (Exception x) {
-          e = null;
-          ex = x;
-        }
-      }
-
-      if(e != null) {
-        ecb(true, e, null);
-      } else {
-        ecb(false, null, ex);
-      }
-    }
-
-    protected IPEndPoint ipep;
-    protected Socket _s;
-
-    ///this is the thread were the socket is read:
-    protected readonly Thread _listen_thread;
-    protected readonly Thread _send_thread;
-    protected readonly LFBlockingQueue<UdpMessage> _send_queue;
+    /////////
+    // Constructors
+    /////////
 
     public UdpEdgeListener() : this(0, null, null)
     {
@@ -508,71 +774,171 @@ namespace Brunet.Transport
      */
     public UdpEdgeListener(int port, IEnumerable local_config_ips, TAAuthorizer ta_auth)
     {
-      _s = new Socket(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
-      _s.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.SendBuffer, Int32.MaxValue);
-      _s.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReceiveBuffer, Int32.MaxValue);
-      ipep = new IPEndPoint(IPAddress.Any, port);
-      _s.Bind(ipep);
-      _port = port = ((IPEndPoint) (_s.LocalEndPoint)).Port;
+      //Create the socket we will use:
+      var s = new Socket(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
+      var ipep = new IPEndPoint(IPAddress.Any, port);
+      s.Bind(ipep);
+      
+      //This manages sending on the socket:
+      _send_server = new SendServer(s, new byte[8 + Int16.MaxValue]);
+     
+      //Manage the listening on the socket: 
+      if( ta_auth == null ) {
+        //Always authorize in this case:
+        ta_auth = new ConstantAuthorizer(TAAuthorizer.Decision.Allow);
+      }
+      //Don't keep a reference to this, we want to let it live in the other thread:
+      var ls = new ListenerState(this, s, ta_auth);
+      _listen_thread = new Thread( ls.ListenThread );
+      _actions = new LockFreeStack<IListenerAction>(); 
+      
+      //Set up the public state:
       /**
        * We get all the IPAddresses for this computer
        */
+      _port = ((IPEndPoint) (s.LocalEndPoint)).Port;
+      LocalEP = new IPEndPoint(IPAddress.Loopback, _port);
+      IEnumerable tas;
       if( local_config_ips == null ) {
-        _tas = TransportAddressFactory.CreateForLocalHost(TransportAddress.TAType.Udp, _port);
+        tas = TransportAddressFactory.CreateForLocalHost(TransportAddress.TAType.Udp, _port);
       }
       else {
-        _tas = TransportAddressFactory.Create(TransportAddress.TAType.Udp, _port, local_config_ips);
+        tas = TransportAddressFactory.Create(TransportAddress.TAType.Udp, _port, local_config_ips);
       }
-      _nat_hist = null;
-      _nat_tas = new NatTAs( _tas, _nat_hist );
-      _ta_auth = ta_auth;
-      if( _ta_auth == null ) {
-        //Always authorize in this case:
-        _ta_auth = new ConstantAuthorizer(TAAuthorizer.Decision.Allow);
-      }
-      //We start out expecting around 30 edges with
-      //a load factor of 0.15 (to make edge lookup fast)
-      _id_ht = new Hashtable(30, 0.15f);
-      _remote_id_ht = new Hashtable();
-      _sync = new object();
-      _running = 0;
-      _isstarted = 0;
-      ///@todo, we need a system for using the cryographic RNG
-      _rand = new Random();
-      _send_handler = this;
-      _listen_finished_event = new ManualResetEvent(false);
-      _listen_thread = new Thread(ListenThread);
-      _send_thread = new Thread(SendThread);
-      _send_thread.IsBackground = true;
-      _send_queue = new LFBlockingQueue<UdpMessage>();
+      //Set up the public state:
+      NatHistory nh = null;
+      int edgecount = 0; //no edges yet
+      int runstate = 0; //not yet started
+      var ps = new PublicState(nh, new NatTAs(tas, nh), tas, edgecount, runstate);
+      _pub_state = new Mutable<PublicState>(ps);
     }
 
-    protected void SendControlPacket(EndPoint end, int remoteid, int localid,
-                                     ControlCode c, object state) 
+    /////////
+    // Methods
+    /////////
+    
+    /**
+     * When a UdpEdge closes we need to remove it from
+     * our table, so we will know it is new if it comes
+     * back.
+     */
+    public void CloseHandler(object edge, EventArgs args)
     {
-      using(MemoryStream ms = new MemoryStream()) {
-        NumberSerializer.WriteInt((int)c, ms);
-        if( c == ControlCode.EdgeDataAnnounce ) {
-          UdpEdge e = (UdpEdge)_id_ht[localid];
-          if( (e != null) && (e.RemoteID == remoteid) ) {
-            Hashtable t = new Hashtable();
-            t["RemoteTA"] = e.RemoteTA.ToString();
-            t["LocalTA"] = e.LocalTA.ToString();
-            AdrConverter.Serialize(t, ms);
-          }
-          else {
-            if(ProtocolLog.UdpEdge.Enabled)
-              ProtocolLog.Write(ProtocolLog.UdpEdge, String.Format(
-                "Problem sending EdgeData: EndPoint: {0}, remoteid: {1}, " +
-                "localid: {2}, Edge: {3}", end, remoteid, localid, e));
-          }
+      //Eventually, this packet will make it into the listen thread:
+      _actions.Push(new CloseAction((UdpEdge)edge));
+    }
+    /**
+     * Implements the EdgeListener function to 
+     * create edges of this type.
+     */
+    public override void CreateEdgeTo(TransportAddress ta, EdgeCreationCallback ecb)
+    {
+      try {
+        if( !IsStarted ) {
+	  throw new EdgeException("UdpEdgeListener is not started");
         }
+        if( ta.TransportAddressType != this.TAType ) {
+	  throw new EdgeException(ta.TransportAddressType.ToString()
+				+ " is not my type: " + this.TAType.ToString() );
+        }
+        _actions.Push(new CreateAction(ta, ecb));
+        WakeListen();
+      }
+      catch(Exception x) {
+        ecb(false, null, x);
+      }
+    }
 
-        _send_queue.Enqueue(new UdpMessage(localid, ~remoteid, MemBlock.Reference(ms.ToArray()), end));
-        if(ProtocolLog.UdpEdge.Enabled) {
-          ProtocolLog.Write(ProtocolLog.UdpEdge, String.Format(
-            "Sending control {1} to: {0}", end, c));
+    protected static IPEndPoint GuessLocalEndPoint(int defport, IEnumerable tas) {
+      try {
+        foreach(IPTransportAddress ta in tas) {
+          var a = ta.GetIPAddress();
+          if((false == IPAddress.IsLoopback(a)) &&
+             (false == IPAddress.Any.Equals(a))) {
+            //Here is a good IP address:
+            return new IPEndPoint(a, ta.Port);
+          }
         }
+      }
+      catch (Exception x) {
+        ProtocolLog.WriteIf(ProtocolLog.Exceptions, x.ToString());
+      }
+      return new IPEndPoint(IPAddress.Loopback, defport);
+    }
+
+    /**
+     * When UdpEdge objects call Send, it calls this packet
+     * callback:
+     */
+    public void HandleEdgeSend(Edge from, ICopyable p) {
+      UdpEdge sender = (UdpEdge) from;
+      var ss = new SendState(sender.ID, sender.RemoteID, p, sender.End);
+      if( false == _send_server.Add(ss) ) {
+        //This is a transient error, the queue is full:
+        throw new EdgeException(true, "UDP Queue full, can't send"); 
+      }
+    }
+
+    /**
+     * When a new Connection is added, we may need to update the list
+     * of TAs to make sure it is not too long, and that the it is sorted
+     * from most likely to least likely to be successful
+     * @param e the new Edge
+     * @param ta the TransportAddress our TA according to our peer
+     */
+    public override void UpdateLocalTAs(Edge e, TransportAddress ta) {
+      UdpEdge ue = e as UdpEdge;
+      if( null != ue ) {
+        ue.PeerViewOfLocalTA = ta;
+        _pub_state.Update(
+          new AddNatData(new LocalMappingChangePoint(DateTime.UtcNow, e, ta))
+        );
+      }
+    }
+
+    /*
+     * send an action into the the listen thread if we are not there already
+     */
+    private void WakeListen() {
+      if( Thread.CurrentThread != _listen_thread ) {
+        //Only wake up the ListenThread if we are not
+        //already in the listen thread:
+        //TODO this assumes a local packet is never lost.
+        //if a local packet is lost but no other packets are received,
+        //the other threads might not wake up 
+        var ss = new SendState(-1, -1, MemBlock.Null, LocalEP);
+        _send_server.Add(ss);
+        //Send twice, just in case, don't do this a lot
+        _send_server.Add(ss);
+      }
+    }
+
+    protected void SendControlPacket(UdpEdge e, EndPoint end, int remoteid, int localid, ControlCode c) 
+    {
+      var code = new byte[4];
+      NumberSerializer.WriteInt((int)c, code, 0);
+      ICopyable data = MemBlock.Reference(code);
+      if( c == ControlCode.EdgeDataAnnounce ) {
+        if( (e != null) && (e.RemoteID == remoteid) ) {
+          Hashtable t = new Hashtable();
+          t["RemoteTA"] = e.RemoteTA.ToString();
+          t["LocalTA"] = e.LocalTA.ToString();
+          data = new CopyList(data, new AdrCopyable(t));
+        }
+        else {
+          if(ProtocolLog.UdpEdge.Enabled)
+            ProtocolLog.Write(ProtocolLog.UdpEdge, String.Format(
+              "Problem sending EdgeData: EndPoint: {0}, remoteid: {1}, " +
+              "localid: {2}, Edge: {3}", end, remoteid, localid, e));
+        }
+      }
+      //Bit flip remote to indicate this is a control packet
+      var ss = new SendState(localid, ~remoteid, data, end);
+      _send_server.Add(ss);
+
+      if(ProtocolLog.UdpEdge.Enabled) {
+        ProtocolLog.Write(ProtocolLog.UdpEdge, String.Format(
+          "Sending control {1} to: {0}", end, c));
       }
     }
     /**
@@ -582,13 +948,10 @@ namespace Brunet.Transport
      */
     public override void Start()
     {
-      if( 1 == Interlocked.Exchange(ref _isstarted, 1) ) {
-        //We can't start twice... too bad, so sad:
-        throw new Exception("Restart never allowed");
-      }
-      Interlocked.Exchange(ref _running, 1);
+      _pub_state.Update(new StartUpdater());
       _listen_thread.Start();
-      _send_thread.Start();
+      Thread t = new Thread(_send_server.Run);
+      t.Start();
     }
 
     /**
@@ -596,148 +959,13 @@ namespace Brunet.Transport
      */
     public override void Stop()
     {
-      Interlocked.Exchange(ref _running, 0);
-      /*
-       * We send a packet to the other thread to get it out of blocking
-       * on ReceieveFrom
-       */
-      Thread this_thread = Thread.CurrentThread;
-      if( this_thread != _listen_thread ) {
-        EndPoint ep = new IPEndPoint(IPAddress.Loopback, _port);
-        //Keep sending packets until the listen thread stops listening
-        do {
-          SendControlPacket(ep, 0, 0, ControlCode.Null, null);
-          //Wait 500 ms for the thread to get the packet
-        } while( false == _listen_finished_event.WaitOne(500, false) );
-        _send_queue.Enqueue(null);
+      _pub_state.Update(new StopUpdater());
+      if( Thread.CurrentThread != _listen_thread ) {
+        //Now run has been set to stop, just wake up:
+        WakeListen(); 
         _listen_thread.Join();
-        _send_thread.Join();
       }
-
-      Hashtable id_ht = null;
-      lock(_id_ht) {
-        id_ht = new Hashtable(_id_ht);
-      }
-
-      foreach(Edge e in id_ht.Values) {
-        try {
-          e.Close();
-        } catch { }
-      }
-    }
-
-    /**
-     * This is a System.Threading.ThreadStart delegate
-     * We loop waiting for edges that need to send,
-     * or data on the socket.
-     *
-     * This is the only thread that can touch the socket,
-     * therefore, we do not need to lock the socket.
-     */
-    protected void ListenThread()
-    {
-      Thread.CurrentThread.Name = "udp_listen_thread";
-      BufferAllocator ba = new BufferAllocator(8 + Int16.MaxValue);
-      EndPoint end = new IPEndPoint(IPAddress.Any, 0);
-
-      DateTime last_debug = DateTime.UtcNow;
-      int debug_period = 5000;
-      bool logging = ProtocolLog.Monitor.Enabled;
-      int rec_bytes = 0;
-      while(1 == _running) {
-        if(logging) {
-          DateTime now = DateTime.UtcNow;
-          if(last_debug.AddMilliseconds(debug_period) < now) {
-            last_debug = now;
-            ProtocolLog.Write(ProtocolLog.Monitor, String.Format("I am alive: {0}", now));
-          }
-        }
-
-        int max = ba.Capacity;
-        try {
-          rec_bytes = _s.ReceiveFrom(ba.Buffer, ba.Offset, max,
-                                          SocketFlags.None, ref end);
-        } catch(SocketException x) {
-          if((1 == _running) && ProtocolLog.UdpEdge.Enabled) {
-            ProtocolLog.Write(ProtocolLog.UdpEdge, x.ToString());
-          }
-        }
-
-        if(rec_bytes < 8) {
-          continue;
-        }
-
-        int remoteid = NumberSerializer.ReadInt(ba.Buffer, ba.Offset);
-        int localid = NumberSerializer.ReadInt(ba.Buffer, ba.Offset + 4);
-
-        MemBlock packet_buffer = MemBlock.Reference(ba.Buffer, ba.Offset + 8, rec_bytes - 8);
-        ba.AdvanceBuffer(rec_bytes);
-
-        if( localid < 0 ) {
-          // Negative ids are control messages
-          HandleControlPacket(remoteid, localid, packet_buffer, null);
-        } else {
-          HandleDataPacket(remoteid, localid, packet_buffer, end, null);
-        }
-      }
-      //Let everyone know we are out of the loop
-      _listen_finished_event.Set();
-      _s.Close();
-      //Allow garbage collection
-      _s = null;
-    }
-
-    protected void SendThread()
-    {
-      byte[] buffer = new byte[8 + Int16.MaxValue];
-      bool timedout = false;
-
-      while(_running == 1) {
-        UdpMessage to_send = _send_queue.Dequeue(-1, out timedout);
-        if(to_send == null) {
-          break;
-        }
-        NumberSerializer.WriteInt(to_send.LocalID, buffer, 0);
-        NumberSerializer.WriteInt(to_send.RemoteID, buffer, 4);
-
-        try {
-          int length = to_send.Data.CopyTo(buffer, 8);
-          _s.SendTo(buffer, 8 + length, SocketFlags.None, to_send.Dst);
-        } catch(SocketException x) {
-          if((1 == _running) && ProtocolLog.UdpEdge.Enabled) {
-            ProtocolLog.Write(ProtocolLog.UdpEdge, x.ToString());
-          }
-        }
-      }
-    }
-
-    /**
-     * When UdpEdge objects call Send, it calls this packet callback:
-     */
-    public void HandleEdgeSend(Edge from, ICopyable p) {
-      if(_send_queue.Count > 1024) {
-        Console.WriteLine("Send queue too big: " + _send_queue.Count);
-        // This may be causing the memory leak ... not certain
-        return;
-//        throw new EdgeException(true, "Could not send on: " + from);
-      }
-      UdpEdge edge = from as UdpEdge;
-      _send_queue.Enqueue(new UdpMessage(edge.ID, edge.RemoteID, p, edge.End));
-    }
-
-    public class UdpMessage {
-      public readonly int LocalID;
-      public readonly int RemoteID;
-      public readonly ICopyable Data;
-      public readonly EndPoint Dst;
-
-      public UdpMessage(int localid, int remoteid, ICopyable data, EndPoint dst)
-      {
-        LocalID = localid;
-        RemoteID = remoteid;
-        Data = data;
-        Dst = dst;
-      }
+      _send_server.Stop();
     }
   }
 }

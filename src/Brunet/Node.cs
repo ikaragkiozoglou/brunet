@@ -56,6 +56,9 @@ namespace Brunet
    */
   abstract public class Node : IDataHandler, ISender, IActionQueue, ITAHandler
   {
+ // /////////////////
+ // Static methods
+ // /////////////////
     static Node() {
       SenderFactory.Register("localnode", CreateLocalSender); 
     }
@@ -63,6 +66,9 @@ namespace Brunet
     public static Node CreateLocalSender(object n, string uri) {
       return (Node)n;
     }
+ // /////////////////
+ // Constructors 
+ // /////////////////
     /**
      * Create a node in the realm "global"
      */
@@ -99,8 +105,16 @@ namespace Brunet
         _send_pings = 1;
         _LOG = ProtocolLog.Monitor.Enabled;
 
-        _connection_table = new ConnectionTable(_local_add);
+        //The default is pretty good, but add fallback handling of Relay:
+        var erp = DefaultERPolicy.Create(Brunet.Relay.RelayERPolicy.Instance,
+                                         addr,
+                                           typeof(Brunet.Transport.UdpEdge),
+                                           typeof(Brunet.Transport.TcpEdge),
+                                           typeof(Brunet.Relay.RelayEdge)
+                                        );
+        _connection_table = new ConnectionTable(erp);
         _connection_table.ConnectionEvent += this.ConnectionHandler;
+        LockMgr = new ConnectionLockManager(_connection_table);
 
         //We start off offline.
         _con_state = Node.ConnectionState.Offline;
@@ -113,14 +127,21 @@ namespace Brunet
         /* Set up RPC */
         _rpc = new RpcManager(_rrm);
         DemuxHandler.GetTypeSource( PType.Protocol.Rpc ).Subscribe(_rpc, null);
-
+        //Add a map-reduce handlers:
+        _mr_handler = new MR.MapReduceHandler(this);
+        //Subscribe it with the RPC handler:
+        _rpc.AddHandler("mapreduce", _mr_handler);
+        //Set up Fragmenting Handler:
+        var fh = new FragmentingHandler(1024); //cache at most 1024 fragments
+        DemuxHandler.GetTypeSource(
+          FragmentingSender.FragPType ).Subscribe(fh, this);
+        fh.Subscribe(this, fh);
         /*
          * Where there is a change in the Connections, we might have a state
          * change
          */
         _connection_table.ConnectionEvent += this.CheckForStateChange;
         _connection_table.DisconnectionEvent += this.CheckForStateChange;
-        _connection_table.StatusChangedEvent += this.CheckForStateChange;
 
 #if !BRUNET_SIMULATOR
         _codeinjection = new Brunet.Services.CodeInjection(this);
@@ -175,6 +196,10 @@ namespace Brunet
             "Exception in heartbeat event : {0}", x));
         }
       }
+      public void OnFuzzy(DateTime runtime) {
+        //Put us into the node's queue so we run in that thread
+        _n.EnqueueAction(this);
+      }
    }
 
     protected class LogAction : IAction {
@@ -219,25 +244,6 @@ namespace Brunet
         }
       }
     }
-    private class EdgeCloseAction : IAction {
-      protected Edge EdgeToClose;
-      public EdgeCloseAction(Edge e) {
-        EdgeToClose = e;
-      }
-      public void Start() {
-        EdgeToClose.Close();
-      }
-      public override string ToString() {
-        return "EdgeCloseAction: " + EdgeToClose.ToString();
-      }
-    }
-
-    public class GracefulCloseAction : Triple<Node, Edge, string>, IAction {
-      public GracefulCloseAction(Node n, Edge e, string r) : base(n, e, r) { }
-      public void Start() {
-        First.GracefullyClose(Second, Third);
-      }
-    }
 
     /**
      * This is a TaskQueue where new TaskWorkers are started
@@ -254,12 +260,11 @@ namespace Brunet
       }
     }
 
-//////
-// End of inner classes
-/////
+// ////
+// Inner types, delegates 
+// ///
 
     public delegate bool EdgeVerifier(Node node, Edge e, Address addr);
-    public EdgeVerifier EdgeVerifyMethod;
 
     /**
      * This represents the Connection state of the node.
@@ -275,19 +280,10 @@ namespace Brunet
       Disconnected /// We are completely disconnected and have no active Edges.
     }
     public delegate void StateChangeHandler(Node n, ConnectionState newstate);
-    /**
-     * This event is called every time Node.ConState changes.  The new state
-     * is passed with the event.
-     */
-    public event StateChangeHandler StateChangeEvent;
-    public ConnectionState ConState {
-      get {
-        lock( _sync ) {
-          return _con_state;
-        }
-      }
-    }
-    protected ConnectionState _con_state;
+ 
+ // /////////////////
+ // Immutable Member variables 
+ // /////////////////
 
     protected readonly Address _local_add;
     /**
@@ -305,16 +301,105 @@ namespace Brunet
      *  my EdgeFactory
      */
     public EdgeFactory EdgeFactory { get { return _edge_factory; } }
+    
+    protected readonly BCon.LFBlockingQueue<IAction> _packet_queue;
+    
+    //If we get this big, we just throw an exception, and not enqueue it
+    protected static readonly int MAX_QUEUE_LENGTH = 8192;
+    /**
+     * This number should be more thoroughly tested, but my system and dht
+     * never surpassed 105.
+     */
+    public static readonly int MAX_AVG_QUEUE_LENGTH = 4096;
+    public static readonly float PACKET_QUEUE_RETAIN = 0.99f;
+    
+    protected readonly string _realm;
+    /**
+     * Each Brunet Node is in exactly 1 realm.  This is 
+     * a namespacing feature.  This allows you to create
+     * Brunets which are separate from other Brunets.
+     *
+     * The default is "global" which is the standard
+     * namespace.
+     */
+    public string Realm { get { return _realm; } }
+    
+    protected readonly Util.FuzzyEvent _check_edges;
+
+    /** Object which we lock for thread safety */
+    protected readonly object _sync;
+
+    /**  <summary>Handles subscriptions for the different types of packets
+    that come to this node.</summary>*/
+    public readonly DemuxHandler DemuxHandler;
+
+
+    protected readonly ConnectionTable _connection_table;
+
+    /**
+     * Manages the various mappings associated with connections
+     */
+    public virtual ConnectionTable ConnectionTable { get { return _connection_table; } }
+    public readonly ConnectionLockManager LockMgr;
+    /**
+     * Brunet IPHandler service!
+     */
+    public virtual IPHandler IPHandler { get { return null; } }
+    protected Brunet.Services.CodeInjection _codeinjection;
+    
+    protected readonly ReqrepManager _rrm;
+    public ReqrepManager Rrm { get { return _rrm; } }
+    protected readonly RpcManager _rpc;
+    public RpcManager Rpc { get { return _rpc; } }
+    protected readonly MR.MapReduceHandler _mr_handler;
+    public MR.MapReduceHandler MapReduce { get { return _mr_handler; } }
+    
+    protected readonly NodeTaskQueue _task_queue;
+    /**
+     * This is the TaskQueue for this Node
+     */
+    public TaskQueue TaskQueue { get { return _task_queue; } }
+
+    protected readonly int _heart_period;
+    ///how many milliseconds between heartbeats
+    public int HeartPeriod { get { return _heart_period; } }
+    
+    protected readonly Dictionary<EventHandler, Brunet.Util.FuzzyEvent> _heartbeat_handlers;
+    
+    ///This is the maximum value we allow _connection_timeout to grow to
+    protected static readonly TimeSpan MAX_CONNECTION_TIMEOUT = new TimeSpan(0,0,0,15,0);
+    //Give edges this long to get connected, then drop them
+    protected static readonly TimeSpan _unconnected_timeout = new TimeSpan(0,0,0,30,0);
+    /**
+     * Maximum number of TAs we keep in both for local and remote.
+     * This does not control how many we send to our neighbors.
+     */
+    static protected readonly int _MAX_RECORDED_TAS = 10000;
+    //Getting from a BooleanSwitch is strangely very expensive, do it once
+    protected readonly bool _LOG;
+    
+
+ // /////////////////
+ // Mutable Member variables 
+ // /////////////////
+
+    public ConnectionState ConState {
+      get {
+        lock( _sync ) {
+          return _con_state;
+        }
+      }
+    }
+    protected ConnectionState _con_state;
 
     protected ImmutableList<Discovery> _ta_discovery;
-
     /**
      * Here are all the EdgeListener objects for this Node
      */
-    protected ArrayList _edgelistener_list;
+    protected readonly ArrayList _edgelistener_list;
     public ArrayList EdgeListenerList {
       get {
-        return (ArrayList) _edgelistener_list.Clone();
+        return ArrayList.ReadOnly(_edgelistener_list);
       }
     }
 
@@ -355,21 +440,10 @@ namespace Brunet
     virtual public int NetworkSize {
       get { return -1; }
     }
-    protected readonly BCon.LFBlockingQueue<IAction> _packet_queue;
     /** The IAction that was most recently started */
     protected IAction _current_action;
     protected float _packet_queue_exp_avg = 0.0f;
 
-    //Getting from a BooleanSwitch is strangely very expensive, do it once
-    protected bool _LOG;
-    //If we get this big, we just throw an exception, and not enqueue it
-    protected static readonly int MAX_QUEUE_LENGTH = 8192;
-    /**
-     * This number should be more thoroughly tested, but my system and dht
-     * never surpassed 105.
-     */
-    public static readonly int MAX_AVG_QUEUE_LENGTH = 4096;
-    public static readonly float PACKET_QUEUE_RETAIN = 0.99f;
     public bool DisconnectOnOverload {
       get { return _disconnect_on_overload; }
       set { _disconnect_on_overload = value; }
@@ -377,17 +451,6 @@ namespace Brunet
 
     public bool _disconnect_on_overload = false;
 
-    protected readonly string _realm;
-    /**
-     * Each Brunet Node is in exactly 1 realm.  This is 
-     * a namespacing feature.  This allows you to create
-     * Brunets which are separate from other Brunets.
-     *
-     * The default is "global" which is the standard
-     * namespace.
-     */
-    public string Realm { get { return _realm; } }
-    
     protected ImmutableList<TransportAddress> _remote_ta;
     /**
      * These are all the remote TransportAddress objects that
@@ -413,65 +476,6 @@ namespace Brunet
      */
     protected int _running;
     protected int _send_pings;
-    protected Util.FuzzyEvent _check_edges;
-
-    /** Object which we lock for thread safety */
-    protected readonly object _sync;
-
-    /**  <summary>Handles subscriptions for the different types of packets
-    that come to this node.</summary>*/
-    public readonly DemuxHandler DemuxHandler;
-
-    /**
-    <summary>All packets that come to this are demultiplexed according to t.
-    To subscribe or unsubscribe, get the ISource for the type you want and
-    subscribe to it,</summary>
-    <param name="t">The key for the MultiSource.</param>
-    @deprecated Use Node.DemuxHandler.GetTypeSource
-    */
-    public ISource GetTypeSource(Object t) {
-      return DemuxHandler.GetTypeSource(t);
-    }
-
-    /**
-    <summary>Deletes (and thus unsubscribes) all IDataHandlers for a given key.
-    </summary>
-    <param name="t">The key for the MultiSource.</param>
-    @deprecated Use Node.DemuxHandler.ClearTypeSource
-    */
-    public void ClearTypeSource(Object t) {
-      DemuxHandler.ClearTypeSource(t);
-    }
-
-    /**
-    <summary>Deletes (and thus unsubscribes) all IDataHandlers for the table.
-    </summary>
-    @deprecated Use Node.DemuxHandler.Clear
-    */
-    public void Clear() {
-      DemuxHandler.Clear();
-    }
-
-    protected readonly ConnectionTable _connection_table;
-
-    /**
-     * Manages the various mappings associated with connections
-     */
-    public virtual ConnectionTable ConnectionTable { get { return _connection_table; } }
-    /**
-     * Brunet IPHandler service!
-     */
-    public IPHandler IPHandler { get { return _iphandler; } }
-    protected IPHandler _iphandler;
-    protected Brunet.Services.CodeInjection _codeinjection;
-    
-    protected readonly ReqrepManager _rrm;
-    public ReqrepManager Rrm { get { return _rrm; } }
-    protected readonly RpcManager _rpc;
-    public RpcManager Rpc { get { return _rpc; } }
-    protected MR.MapReduceHandler _mr_handler;
-    public MR.MapReduceHandler MapReduce { get { return _mr_handler; } }
-
 
     /**
      * This is true if the Node is properly connected in the network.
@@ -482,38 +486,26 @@ namespace Brunet
      * until it is false if you need the Node to be connected
      */
     public abstract bool IsConnected { get; }
-    protected readonly NodeTaskQueue _task_queue;
-    /**
-     * This is the TaskQueue for this Node
-     */
-    public TaskQueue TaskQueue { get { return _task_queue; } }
-
-    protected int _heart_period;
-    ///how many milliseconds between heartbeats
-    public int HeartPeriod { get { return _heart_period; } }
-
     ///If we don't hear anything from a *CONNECTION* in this time, ping it.
     protected TimeSpan _connection_timeout;
-    ///This is the maximum value we allow _connection_timeout to grow to
-    protected static readonly TimeSpan MAX_CONNECTION_TIMEOUT = new TimeSpan(0,0,0,15,0);
-    //Give edges this long to get connected, then drop them
-    protected static readonly TimeSpan _unconnected_timeout = new TimeSpan(0,0,0,30,0);
+
+// ///////////////
+//  Events and Delegates
+// ///////////////
     /**
-     * Maximum number of TAs we keep in both for local and remote.
-     * This does not control how many we send to our neighbors.
-     */
-    static protected readonly int _MAX_RECORDED_TAS = 10000;
+     * This is used to verify new incoming edges
+     * @todo this should probably be a property
+     */ 
+    public EdgeVerifier EdgeVerifyMethod;
 
     ///after each HeartPeriod, the HeartBeat event is fired
     public event EventHandler HeartBeatEvent {
       add {
-        IAction hba = new HeartBeatAction(this, value);
-        Action<DateTime> torun = delegate(DateTime now) {
-          //Execute the code in the node's thread
-          this.EnqueueAction(hba);
-        };
+        var hba = new HeartBeatAction(this, value);
         //every period +/- half a period, run this event
-        var fe = Brunet.Util.FuzzyTimer.Instance.DoEvery(torun, _heart_period, _heart_period / 2 + 1);
+        var fe = Brunet.Util.FuzzyTimer.Instance.DoEvery(hba.OnFuzzy,
+                                                         _heart_period,
+                                                         _heart_period / 2 + 1);
         bool disconnected = false;
         lock( _sync ) {
           if(_con_state == ConnectionState.Disconnected) {
@@ -540,15 +532,21 @@ namespace Brunet
         }
       }
     }
-
-    protected Dictionary<EventHandler, Brunet.Util.FuzzyEvent> _heartbeat_handlers;
-    
     //add an event handler which conveys the fact that Disconnect has been called on the node
     public event EventHandler DepartureEvent;
 
     //add an event handler which conveys the fact that Connect has been called on the node
     public event EventHandler ArrivalEvent;
+    /**
+     * This event is called every time Node.ConState changes.  The new state
+     * is passed with the event.
+     */
+    public event StateChangeHandler StateChangeEvent;
 
+ // ///////////////////
+ // Methods
+ // ///////////////////
+   
     public virtual void AddEdgeListener(EdgeListener el)
     {
       /* The EdgeFactory needs to be made aware of all EdgeListeners */
@@ -579,6 +577,37 @@ namespace Brunet
 
       HandleTADiscoveryState(this, ConState);
     }
+    /**
+    <summary>Deletes (and thus unsubscribes) all IDataHandlers for a given key.
+    </summary>
+    <param name="t">The key for the MultiSource.</param>
+    @deprecated Use Node.DemuxHandler.ClearTypeSource
+    */
+    public void ClearTypeSource(Object t) {
+      DemuxHandler.ClearTypeSource(t);
+    }
+
+    /**
+    <summary>Deletes (and thus unsubscribes) all IDataHandlers for the table.
+    </summary>
+    @deprecated Use Node.DemuxHandler.Clear
+    */
+    public void Clear() {
+      DemuxHandler.Clear();
+    }
+
+    
+    /**
+    <summary>All packets that come to this are demultiplexed according to t.
+    To subscribe or unsubscribe, get the ISource for the type you want and
+    subscribe to it,</summary>
+    <param name="t">The key for the MultiSource.</param>
+    @deprecated Use Node.DemuxHandler.GetTypeSource
+    */
+    public ISource GetTypeSource(Object t) {
+      return DemuxHandler.GetTypeSource(t);
+    }
+
 
     /// <summary>If the node is connecting, we need TAs, if its in any other
     /// state, we'll deal with what we have.</summary>
@@ -643,7 +672,7 @@ namespace Brunet
     protected void Close(Edge e) {
       try {
         //This can throw an exception if the _packet_queue is closed
-        EnqueueAction(new EdgeCloseAction(e));
+        EnqueueAction(new Edge.CloseAction(e));
       }
       catch {
         e.Close();
@@ -823,9 +852,8 @@ namespace Brunet
           SendStateChange(Node.ConnectionState.Disconnected);
           Dictionary<EventHandler, Brunet.Util.FuzzyEvent> hbhands = null;
           lock(_sync) {
-            hbhands = _heartbeat_handlers;
-            _heartbeat_handlers = null;
-            //Clear out the subscription table
+            //Get a copy of all the heartbeat events so we can stop them:
+            hbhands = new Dictionary<EventHandler, Brunet.Util.FuzzyEvent>(_heartbeat_handlers);
             DemuxHandler.Clear();
           }
           foreach(KeyValuePair<EventHandler, Brunet.Util.FuzzyEvent> de in hbhands) {
@@ -1002,14 +1030,21 @@ namespace Brunet
     public virtual void ConnectionHandler(object ct, EventArgs args)
     {
       ConnectionEventArgs ce_args = (ConnectionEventArgs) args;
-      Edge edge = ce_args.Edge;
+      var con = ce_args.Connection;
+      var edge = ce_args.ConnectionState.Edge;
+      con.StateChangeEvent +=
+        delegate(Connection c,
+                 Pair<Brunet.Connections.ConnectionState,
+                      Brunet.Connections.ConnectionState> oldnew) {
+          //Need to check if we we have to change state:
+          this.CheckForStateChange(null, null); 
+        };
       edge.Subscribe(this, edge);
       //Our peer's remote is us
-      TransportAddress reported_ta =
-            ce_args.Connection.PeerLinkMessage.Remote.FirstTA;
+      var cs = ce_args.Connection.State;
+      TransportAddress reported_ta = cs.PeerLinkMessage.Remote.FirstTA;
       //Our peer's local is them
-      TransportAddress remote_ta =
-            ce_args.Connection.PeerLinkMessage.Local.FirstTA;
+      TransportAddress remote_ta = cs.PeerLinkMessage.Local.FirstTA;
       /*
        * Make a copy so that _remote_ta never changes while
        * someone is using it
@@ -1116,51 +1151,6 @@ namespace Brunet
     }
     
     /**
-     * Close the edge after we get a response CloseMessage
-     * from the node on the other end.
-     * This method is to try to make sure both sides of an edge
-     * know that the edge is closing.
-     * @param e Edge to close
-     */
-    public void GracefullyClose(Edge e)
-    {
-      GracefullyClose(e, String.Empty);
-    }
-    /**
-     * @param e Edge to close
-     * @param cm message to send to other node
-     * This method is used if we want to use a particular CloseMessage
-     * If not, we can use the method with the same name with one fewer
-     * parameters
-     */
-    public void GracefullyClose(Edge e, string message)
-    {
-      /**
-       * Close any connection on this edge, and
-       * put the edge into the list of unconnected edges
-       */
-      _connection_table.Disconnect(e);
-      
-      ListDictionary close_info = new ListDictionary();
-      string reason = message;
-      if( reason != String.Empty ) {
-        close_info["reason"] = reason;
-      }
-      ProtocolLog.WriteIf(ProtocolLog.EdgeClose, String.Format(
-                          "GracefulCLose - " + e + ": " + reason));
-
-      var results = new BCon.Channel(1);
-      EventHandler close_eh = delegate(object o, EventArgs args) {
-        e.Close(); 
-      };
-      results.CloseEvent += close_eh;
-      try {
-        _rpc.Invoke(e, results, "sys:link.Close", close_info);
-      }
-      catch { Close(e); }
-    }
-
-    /**
      * Implements the IDataHandler interface
      */
     public void HandleData(MemBlock data, ISender return_path, object state) {
@@ -1176,7 +1166,7 @@ namespace Brunet
       int count = 0;
       DateTime now = DateTime.UtcNow;
       foreach(Connection con in _connection_table) {
-        Edge e = con.Edge;
+        Edge e = con.State.Edge;
         double this_int = (now - e.LastInPacketDateTime).TotalMilliseconds;
         sum += this_int;
         sum2 += this_int * this_int;
@@ -1220,7 +1210,7 @@ namespace Brunet
        * we ping them, and if we don't get a response, we close them
        */
       foreach(Connection c in _connection_table) {
-        Edge e = c.Edge;
+        Edge e = c.State.Edge;
         TimeSpan since_last_in = now - e.LastInPacketDateTime; 
         if( (1 == _send_pings) && ( since_last_in > _connection_timeout ) ) {
 

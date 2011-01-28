@@ -31,7 +31,6 @@ using System.Threading;
 using Brunet.Collections;
 using Brunet.Util;
 using Brunet.Concurrent;
-using Brunet.Transport;
 
 namespace Brunet.Messaging {
 public interface IRpcHandler {
@@ -163,44 +162,65 @@ public class RpcManager : IReplyHandler, IDataHandler {
       //foreach(object arg in pa) { Console.Error.WriteLine("arg: {0}",arg); }
       //make the following happen asynchronously in a separate thread
       //build an invocation record for the call
-      Object result = null;
+      WaitCallback wb = delegate(object o) {
+        Object result = null;
+        try {
+    #if RPC_DEBUG
+          Console.Error.WriteLine("[RpcServer: {0}] Invoking method: {1}", _rrman.Info, mi);
+    #endif
+          result = mi.Invoke(_handler, arg_array);
+        } catch(ArgumentException argx) {
+    #if RPC_DEBUG
+          Console.Error.WriteLine("[RpcServer: {0}] Argument exception. {1}", _rrman.Info, mi);
+    #endif
+          result = new AdrException(-32602, argx);
+        }
+        catch(TargetParameterCountException argx) {
+    #if RPC_DEBUG
+          Console.Error.WriteLine("[RpcServer: {0}] Parameter count exception. {1}", _rrman.Info, mi);
+    #endif
+          result = new AdrException(-32602, argx);
+        }
+        catch(TargetInvocationException x) {
+    #if RPC_DEBUG
+          Console.Error.WriteLine("[RpcServer: {0}] Exception thrown by method: {1}, {2}", _rrman.Info, mi, x.InnerException.Message);
+    #endif
+          if( x.InnerException is AdrException ) {
+            result = x.InnerException;
+          }
+          else {
+            result = new AdrException(-32608, x.InnerException);
+          }
+        }
+        catch(Exception x) {
+    #if RPC_DEBUG
+          Console.Error.WriteLine("[RpcServer: {0}] General exception. {1}", _rrman.Info, mi);
+    #endif
+          result = x;
+        }
+        finally {
+          _rpc.SendResult(request_state, result);
+        }
+      };
+      //Make sure we don't block while invoking the method:
+#if BRUNET_SIMULATOR
+      //Don't use extra threads in the simulator case:
+      wb(null);
+#else
       try {
-  #if RPC_DEBUG
-        Console.Error.WriteLine("[RpcServer: {0}] Invoking method: {1}", _rrman.Info, mi);
-  #endif
-        result = mi.Invoke(_handler, arg_array);
-      } catch(ArgumentException argx) {
-  #if RPC_DEBUG
-        Console.Error.WriteLine("[RpcServer: {0}] Argument exception. {1}", _rrman.Info, mi);
-  #endif
-        result = new AdrException(-32602, argx);
-      }
-      catch(TargetParameterCountException argx) {
-  #if RPC_DEBUG
-        Console.Error.WriteLine("[RpcServer: {0}] Parameter count exception. {1}", _rrman.Info, mi);
-  #endif
-        result = new AdrException(-32602, argx);
-      }
-      catch(TargetInvocationException x) {
-  #if RPC_DEBUG
-        Console.Error.WriteLine("[RpcServer: {0}] Exception thrown by method: {1}, {2}", _rrman.Info, mi, x.InnerException.Message);
-  #endif
-        if( x.InnerException is AdrException ) {
-          result = x.InnerException;
-        }
-        else {
-          result = new AdrException(-32608, x.InnerException);
+        /*
+         * According to MSDN, the only way this fails is if the CLR is "Hosted"
+         * which appears to mean that it is running inside SQL server.  I can't imagine
+         * us running into that case, but let's handle it just in case.
+         */
+        if( !ThreadPool.QueueUserWorkItem(wb) ) {
+          wb(null);
         }
       }
-      catch(Exception x) {
-  #if RPC_DEBUG
-        Console.Error.WriteLine("[RpcServer: {0}] General exception. {1}", _rrman.Info, mi);
-  #endif
-        result = x;
+      catch(Exception) {
+        wb(null);
       }
-      finally {
-        _rpc.SendResult(request_state, result);
-      }
+#endif
     }
   }
 
@@ -400,11 +420,6 @@ public class RpcManager : IReplyHandler, IDataHandler {
           if( bq != null ) { bq.Close(); }
           break;
         case ReqrepManager.ReqrepError.Send:
-          if( rs.RpcTarget is Edge ) { 
-            Edge e = (Edge)rs.RpcTarget;
-            //This definitely won't get any more responses:
-            if( e.IsClosed && bq != null ) { bq.Close(); } 
-          }
           //We had some problem sending, but ignore it for now
           break;
     }

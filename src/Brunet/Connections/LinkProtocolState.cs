@@ -261,8 +261,10 @@ namespace Brunet.Connections
            * close the edge gracefully.
            */
           if (LinkMessageReply != null) {
-            //Let's be nice:
-            _node.GracefullyClose(_e, "From LPS, did not complete a connection.");
+            //Let's be nice, send a Close message, but don't add this connection:
+            Connection tmp_c = new Connection(_e, LinkMessageReply.Local.Address,
+                                        _contype, null, LinkMessageReply);
+            tmp_c.Close(_node.Rpc, "From LPS, did not complete a connection.");
           }
           else {
             /*
@@ -370,8 +372,7 @@ namespace Brunet.Connections
      * Unlock any lock which is held by this state
      */
     public void Unlock() {
-      ConnectionTable tab = _node.ConnectionTable;
-      tab.Unlock( _contype, this );
+      _node.LockMgr.Unlock( _contype, this );
     }
 
     protected LinkMessage MakeLM() {
@@ -454,14 +455,12 @@ namespace Brunet.Connections
        * once, and once it happens a future attempt will throw an exception
        */
       _lm_reply.Value = lm;
-      
-      ConnectionTable tab = _node.ConnectionTable;
       /*
        * This throws an exception if:
        * 0) we can't get the lock.
        * 1) we already have set _target_lock to something else
        */
-      tab.Lock( lm.Local.Address, _contype, this );
+      _node.LockMgr.Lock( lm.Local.Address, _contype, this );
     }
 
     /**
@@ -501,6 +500,10 @@ namespace Brunet.Connections
         rpc.Invoke(_e, results, "sys:link.GetStatus", sm.ToDictionary() );
       }
       catch(AdrException x) {
+        if(ProtocolLog.LinkDebug.Enabled) {
+          ProtocolLog.Write(ProtocolLog.LinkDebug, String.Format(
+            "LPS.LinkCloseHandlerHandler edge: {1} Exception: {0}", x, _e));
+        }
         /*
          * This happens when the RPC call has some kind of issue,
          * first we check for common error conditions:
@@ -509,29 +512,53 @@ namespace Brunet.Connections
         Finish( GetResultForErrorCode(x.Code) );
       }
       catch(ConnectionExistsException x) {
+        if(ProtocolLog.LinkDebug.Enabled) {
+          ProtocolLog.Write(ProtocolLog.LinkDebug, String.Format(
+            "LPS.LinkCloseHandlerHandler edge: {1} Exception: {0}", x, _e));
+        }
         /* We already have a connection */
         _x.Value = x;
         Finish( Result.ProtocolError );
       }
       catch(CTLockException x) {
+        if(ProtocolLog.LinkDebug.Enabled) {
+          ProtocolLog.Write(ProtocolLog.LinkDebug, String.Format(
+            "LPS.LinkCloseHandlerHandler edge: {1} Exception: {0}", x, _e));
+        }
         //This is thrown when ConnectionTable cannot lock.  Lets try again:
         _x.Value = x;
         Finish( Result.RetryThisTA );
       }
       catch(LinkException x) {
+        if(ProtocolLog.LinkDebug.Enabled) {
+          ProtocolLog.Write(ProtocolLog.LinkDebug, String.Format(
+            "LPS.LinkCloseHandlerHandler edge: {1} Exception: {0}", x, _e));
+        }
         _x.Value = x;
         if( x.IsCritical ) { Finish( Result.MoveToNextTA ); }
         else { Finish( Result.RetryThisTA ); }
       }
-      catch(InvalidOperationException) {
+      catch(InvalidOperationException x) {
+        if(ProtocolLog.LinkDebug.Enabled) {
+          ProtocolLog.Write(ProtocolLog.LinkDebug, String.Format(
+            "LPS.LinkCloseHandlerHandler edge: {1} Exception: {0}", x, _e));
+        }
         //The queue never got anything
         Finish(Result.MoveToNextTA);
       }
-      catch(EdgeException) {
+      catch(EdgeException x) {
+        if(ProtocolLog.LinkDebug.Enabled) {
+          ProtocolLog.Write(ProtocolLog.LinkDebug, String.Format(
+            "LPS.LinkCloseHandlerHandler edge: {1} Exception: {0}", x, _e));
+        }
         //The Edge is goofy, let's move on:
         Finish(Result.MoveToNextTA);
       }
       catch(Exception x) {
+        if(ProtocolLog.LinkDebug.Enabled) {
+          ProtocolLog.Write(ProtocolLog.LinkDebug, String.Format(
+            "LPS.LinkCloseHandlerHandler edge: {1} Exception: {0}", x, _e));
+        }
         //The protocol was not followed correctly by the other node, fail
         _x.Value = x;
         Finish( Result.RetryThisTA );

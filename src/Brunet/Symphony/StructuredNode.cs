@@ -45,28 +45,46 @@ namespace Brunet.Symphony
 
   public class StructuredNode:Node
   {
+
+// /////////////////////////////
+// Member variables
+// /////////////////////////////
     /**
      * Here are the ConnectionOverlords for this type of Node
      */
-    protected ConnectionOverlord _leafco;
-    protected ConnectionOverlord _snco;
-    protected ConnectionOverlord _ssco;
+    protected readonly LeafConnectionOverlord _leafco;
+    protected readonly StructuredNearConnectionOverlord _snco;
+    protected readonly StructuredShortcutConnectionOverlord _ssco;
     //give access to the Structured connection overlord
     public StructuredShortcutConnectionOverlord Ssco {
       get {
-        return _ssco as StructuredShortcutConnectionOverlord;
+        return _ssco;
       }
     }
 
     //maximum number of neighbors we report in our status
     protected static readonly int MAX_NEIGHBORS = 4;
-    public ConnectionPacketHandler sys_link;
+    public readonly ConnectionPacketHandler sys_link;
+
+    protected readonly IPHandler _iphandler;
+    public override IPHandler IPHandler { get { return _iphandler; } }
 
     public override bool IsConnected {
       get {
         return _snco.IsConnected;
       }
     }
+    
+    protected int _netsize = -1;
+    override public int NetworkSize {
+      get {
+        return _netsize;
+      }
+    }
+
+// /////////////////////////////
+// Constructors 
+// /////////////////////////////
 
     public StructuredNode(AHAddress add, string realm):base(add,realm)
     {
@@ -101,15 +119,9 @@ namespace Brunet.Symphony
       _rpc.AddHandler("trace", new TraceRpcHandler(this));
       //Serve some public information about our ConnectionTable
       _rpc.AddHandler("ConnectionTable", new ConnectionTableRpc(ConnectionTable, _rpc));
-      //Add a map-reduce handlers:
-      _mr_handler = new MapReduceHandler(this);
-      //Subscribe it with the RPC handler:
-      _rpc.AddHandler("mapreduce", _mr_handler);
-
       //Subscribe map-reduce tasks
       _mr_handler.SubscribeTask(new MapReduceTrace(this));
       _mr_handler.SubscribeTask(new MapReduceRangeCounter(this));
-
       
       /*
        * Handle Node state changes.
@@ -138,12 +150,51 @@ namespace Brunet.Symphony
     
     }
 
-    protected int _netsize = -1;
-    override public int NetworkSize {
-      get {
-        return _netsize;
+// /////////////////////////////
+// IActions (for putting things in the ActionQueue 
+// /////////////////////////////
+
+    protected class UpdateNeighborAction : IAction {
+      public readonly StructuredNode Node;
+      public readonly Connection Neighbor;
+      public readonly string ConType;
+
+      public UpdateNeighborAction(StructuredNode n,
+                                  string contype,
+                                  Connection neigh) {
+        Node = n;
+        ConType = contype;
+        Neighbor = neigh;
+      }
+
+      public void Start() {
+        try {
+          //This edge could have been closed, which will
+          //cause the Rpc to throw an exception
+          Node.CallGetStatus(ConType, Neighbor);
+        }
+        catch(EdgeClosedException) {
+          //Just ignore this connection if it is closed
+        }
+        catch(EdgeException ex) {
+          if( !ex.IsTransient ) {
+            //Make sure this Edge is closed before going forward
+            //@TODO this is not safe, EdgeException should keep a ref to the edge that threw
+            Neighbor.State.Edge.Close();
+          }
+        }
+        catch(Exception x) {
+          if(ProtocolLog.Exceptions.Enabled) {
+              ProtocolLog.Write(ProtocolLog.Exceptions, String.Format(
+                "CallGetStatus() on {0} failed: {1}", Neighbor, x));
+          }
+        }
       }
     }
+
+// /////////////////////////////
+// Methods 
+// /////////////////////////////
 
     override public void Abort() {
       if(ProtocolLog.NodeLog.Enabled) {
@@ -202,7 +253,7 @@ namespace Brunet.Symphony
       //There is no way unconnected edges could have become Connections,
       //so we should put the connections in last.
       foreach(Connection c in _connection_table) {
-        edges_to_close.Add( c.Edge );
+        edges_to_close.Add( c.State.Edge );
       }
       //edges_to_close has all the connections and unconnected edges.
       IList copy = edges_to_close.ToArray();
@@ -399,23 +450,21 @@ namespace Brunet.Symphony
     /**
      * Call the GetStatus method on the given connection
      */
-    protected void CallGetStatus(string type, Connection c) {
-      ConnectionTable tab = this.ConnectionTable;
+    public void CallGetStatus(string type, Connection c) {
       if( c != null ) {
         StatusMessage req = GetStatus(type, c.Address);
         Channel stat_res = new Channel(1);
         EventHandler handle_result = delegate(object q, EventArgs eargs) {
           try {
             RpcResult r = (RpcResult)stat_res.Dequeue();
-            StatusMessage sm = new StatusMessage( (IDictionary)r.Result );
-            tab.UpdateStatus(c, sm);
+            c.SetStatus(new StatusMessage( (IDictionary)r.Result ));
           }
           catch(Exception) {
             //Looks like lc disappeared before we could update it
           }
         };
         stat_res.CloseEvent += handle_result;
-        _rpc.Invoke(c.Edge, stat_res, "sys:link.GetStatus", req.ToDictionary() );
+        _rpc.Invoke(c, stat_res, "sys:link.GetStatus", req.ToDictionary() );
       }
     }
     /**
@@ -441,58 +490,27 @@ namespace Brunet.Symphony
        * Get the data we need about this connection:
        */
       Connection con = cea.Connection;
-      string con_type_string = con.ConType;
       AHAddress new_address = (AHAddress)con.Address;
-
       /*
        * Update the left neighbor:
        */
       Connection lc = structs.GetLeftNeighborOf(new_address);
-      try {
-        //This edge could ahve been closed, which will
-        //cause the Rpc to throw an exception
-        CallGetStatus(con_type_string, lc);
-      }
-      catch(EdgeClosedException) {
-        //Just ignore this connection if it is closed
-      }
-      catch(EdgeException ex) {
-        if( !ex.IsTransient ) {
-          //Make sure this Edge is closed before going forward
-          lc.Edge.Close();
-        }
-      }
-      catch(Exception x) {
-        if(ProtocolLog.Exceptions.Enabled) {
-            ProtocolLog.Write(ProtocolLog.Exceptions, String.Format(
-              "CallGetStatus(left) on {0} failed: {1}", lc, x));
-        }
-      }
+      EnqueueAction( new UpdateNeighborAction(this, con.ConType, lc) );
       /*
        * Update the right neighbor:
        */
       Connection rc = structs.GetRightNeighborOf(new_address);
-      try {
-        if( (lc != rc) ) {
-          //This edge could ahve been closed, which will
-          //cause the Rpc to throw an exception
-          CallGetStatus(con_type_string, rc);
-        }
+      if( lc != rc ) {
+        EnqueueAction( new UpdateNeighborAction(this, con.ConType, rc) );
       }
-      catch(EdgeClosedException) {
-        //Just ignore this connection if it is closed
-      }
-      catch(EdgeException ex) {
-        if( !ex.IsTransient ) {
-          //Make sure this Edge is closed before going forward
-          rc.Edge.Close();
-        }
-      }
-      catch(Exception x) {
-        if(ProtocolLog.Exceptions.Enabled) {
-            ProtocolLog.Write(ProtocolLog.Exceptions, String.Format(
-              "CallGetStatus(right) on {0} failed: {1}", rc, x));
-        }
+    }
+
+    override public void UpdateRemoteTAs(IList<TransportAddress> tas_to_add)
+    {
+      base.UpdateRemoteTAs(tas_to_add);
+      ConnectionState cs = ConState;
+      if(cs == ConnectionState.SeekingConnections || cs == ConnectionState.Joining) {
+        _leafco.Activate();
       }
     }
 

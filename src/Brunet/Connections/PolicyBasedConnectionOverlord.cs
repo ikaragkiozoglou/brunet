@@ -172,13 +172,13 @@ namespace Brunet.Connections {
         // Don't proceed if there is no con, this CO didn't make the con, or
         // the con was initiated by the remote peer
         if(con == null || !con.ConType.Equals(Type) ||
-            _node.Address.ToString().Equals(con.PeerLinkMessage.Token))
+            _node.Address.ToString().Equals(con.State.PeerLinkMessage.Token))
         {
           return;
         }
 
         ProtocolLog.WriteIf(ProtocolLog.OnDemandCO, "Closing: " + con);
-        _node.GracefullyClose(con.Edge, "Closed by request of CO");
+        con.Close(_node.Rpc, "Closed by request of CO");
       };
       FuzzyTimer.Instance.DoAfter(callback, 60000, 500);
     }

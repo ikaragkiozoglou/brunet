@@ -471,8 +471,6 @@ namespace Brunet.Transport {
       set { _el.TAAuth = value; }
     }
 
-    public override long BytesSent { get { return _el.BytesSent; } }
-
     readonly string _path;
     readonly EdgeListener _el;
     readonly PathELManager _pem;

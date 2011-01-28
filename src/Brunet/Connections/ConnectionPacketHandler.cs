@@ -119,7 +119,9 @@ namespace Brunet.Connections
       if(ProtocolLog.LinkDebug.Enabled)
         ProtocolLog.Write(ProtocolLog.LinkDebug, String.Format(
           "sys:link.Close on {0} connection: {1}", from, c));
-      tab.Disconnect(from);
+      if( c != null ) {
+        c.Abort(); //Go ahead and end this connection
+      }
       /** 
        * Release locks when the close message arrives; do not wait
        * until the edge actually closes.
@@ -138,7 +140,7 @@ namespace Brunet.Connections
        * Try to close the edge after a small time span:
        */
       Brunet.Util.FuzzyTimer.Instance.DoAfter(delegate(DateTime now) {
-        _node.EnqueueAction(new Node.GracefulCloseAction(_node, from, "CPH, delayed close"));
+        _node.EnqueueAction(new Edge.CloseAction(from));
       }, 5000, 1000);
       return new ListDictionary();
     }
@@ -300,7 +302,9 @@ namespace Brunet.Connections
                                              lm.Local.Address );
           if( c != null ) {
             RpcManager rpc = _node.Rpc;
-            rpc.Invoke(c.Edge, null, "sys:link.Ping", String.Empty);
+            //This can throw, but it won't cause any failure since
+            //this is only called when the connection attempt already failed.
+            rpc.Invoke(c, null, "sys:link.Ping", String.Empty);
           }
         }
       }
@@ -378,7 +382,7 @@ namespace Brunet.Connections
         Connection c = tab.GetConnection(from);
         if( c != null ) {
           fadd = c.Address;
-            tab.UpdateStatus(c, sm);
+          c.SetStatus(sm);
         }
         response = _node.GetStatus( sm.NeighborType, fadd );
       }
@@ -431,7 +435,6 @@ namespace Brunet.Connections
      */
     protected bool CanConnect(CphState cph, out ErrorMessage err)
     {
-      ConnectionTable tab = _node.ConnectionTable;
       Address local_add = _node.Address;
       LinkMessage lm = cph.LM;
       err = null;
@@ -472,7 +475,7 @@ namespace Brunet.Connections
               "ConnectionPacketHandler - Trying to lock connection table: {0},{1}",
                                   lm.Local.Address, lm.ConTypeString));
 
-          tab.Lock( lm.Local.Address, lm.ConTypeString, cph );
+          _node.LockMgr.Lock( lm.Local.Address, lm.ConTypeString, cph );
           if(ProtocolLog.LinkDebug.Enabled)
             ProtocolLog.Write(ProtocolLog.LinkDebug, String.Format(
               "ConnectionPacketHandler - Successfully locked connection table: {0},{1}",
@@ -512,8 +515,7 @@ namespace Brunet.Connections
         }
       }
       if( cphstate != null ) {
-        ConnectionTable tab = _node.ConnectionTable;
-        tab.Unlock( cphstate.LM.ConTypeString, cphstate );
+        _node.LockMgr.Unlock( cphstate.LM.ConTypeString, cphstate );
       }
     }
   }

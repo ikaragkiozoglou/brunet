@@ -88,6 +88,7 @@
     <Compile Include="..\src\Brunet\Concurrent\ExclusiveServer.cs" />
     <Compile Include="..\src\Brunet\Concurrent\FireOnceEvent.cs" />
     <Compile Include="..\src\Brunet\Concurrent\LockFreeQueue.cs" />
+    <Compile Include="..\src\Brunet\Concurrent\LockFreeStack.cs" />
     <Compile Include="..\src\Brunet\Concurrent\Mutable.cs" />
     <Compile Include="..\src\Brunet\Concurrent\TaskQueue.cs" />
     <Compile Include="..\src\Brunet\Concurrent\WriteOnce.cs" />
@@ -96,6 +97,7 @@
     <Compile Include="..\src\Brunet\Connections\ConnectToMessage.cs" />
     <Compile Include="..\src\Brunet\Connections\Connection.cs" />
     <Compile Include="..\src\Brunet\Connections\ConnectionEventArgs.cs" />
+    <Compile Include="..\src\Brunet\Connections\ConnectionLockManager.cs" />
     <Compile Include="..\src\Brunet\Connections\ConnectionOverlord.cs" />
     <Compile Include="..\src\Brunet\Connections\ConnectionPacketHandler.cs" />
     <Compile Include="..\src\Brunet\Connections\ConnectionTable.cs" />
@@ -103,6 +105,7 @@
     <Compile Include="..\src\Brunet\Connections\CtmRequestHandler.cs" />
     <Compile Include="..\src\Brunet\Connections\ErrorMessage.cs" />
     <Compile Include="..\src\Brunet\Connections\ILinkLocker.cs" />
+    <Compile Include="..\src\Brunet\Connections\IEdgeReplacementPolicy.cs" />
     <Compile Include="..\src\Brunet\Connections\LinkException.cs" />
     <Compile Include="..\src\Brunet\Connections\LinkMessage.cs" />
     <Compile Include="..\src\Brunet\Connections\LinkProtocolState.cs" />
@@ -141,6 +144,7 @@
     <Compile Include="..\src\Brunet\Util\Base32.cs" />
     <Compile Include="..\src\Brunet\Util\BigInteger.cs" />
     <Compile Include="..\src\Brunet\Util\BufferAllocator.cs" />
+    <Compile Include="Delegates.cs" />
     <Compile Include="..\src\Brunet\Util\FuzzyTimer.cs" />
     <Compile Include="..\src\Brunet\Util\ICopyable.cs" />
     <Compile Include="..\src\Brunet\Util\Log.cs" />
@@ -199,6 +203,8 @@
     <Compile Include="..\src\Brunet\Symphony\AHAddress.cs" />
     <Compile Include="..\src\Brunet\Symphony\AHAddressComparer.cs" />
     <Compile Include="..\src\Brunet\Symphony\AHSender.cs" />
+    <Compile Include="..\src\Brunet\Symphony\ConnectionLeftComparer.cs" />
+    <Compile Include="..\src\Brunet\Symphony\ConnectionRightComparer.cs" />
     <Compile Include="..\src\Brunet\Symphony\DirectionalAddress.cs" />
     <Compile Include="..\src\Brunet\Symphony\LeafConnectionOverlord.cs" />
     <Compile Include="..\src\Brunet\Symphony\PacketForwarder.cs" />
