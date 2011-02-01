@@ -513,14 +513,5 @@ namespace Brunet.Symphony
         _leafco.Activate();
       }
     }
-
-    override public void UpdateRemoteTAs(IList<TransportAddress> tas_to_add)
-    {
-      base.UpdateRemoteTAs(tas_to_add);
-      ConnectionState cs = ConState;
-      if(cs == ConnectionState.SeekingConnections || cs == ConnectionState.Joining) {
-        _leafco.Activate();
-      }
-    }
   }
 }
