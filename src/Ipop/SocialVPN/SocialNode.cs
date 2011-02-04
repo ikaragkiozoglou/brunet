@@ -34,6 +34,7 @@ using Brunet.Concurrent;
 using Brunet.Connections;
 using Brunet.Symphony;
 using Brunet.Security.PeerSec.Symphony;
+using Brunet.Transport;
 
 using Ipop;
 using Ipop.Managed;
@@ -168,6 +169,23 @@ namespace Ipop.SocialVPN {
 
     public string GetStats(string address) {
       return _marad.GetStats(address);
+    }
+
+    public string GetNatType() {
+      string result = String.Empty;
+      foreach(EdgeListener el in AppNode.Node.EdgeListenerList) {
+        if(el is PathEdgeListener) {
+          PathEdgeListener pel = el as PathEdgeListener;
+          if(pel.InternalEL is UdpEdgeListener) {
+            NatTAs nat = pel.InternalEL.LocalTAs as NatTAs;
+            nat.GetEnumerator();
+            result = nat.NatHand.Value.GetType().ToString();
+            Console.WriteLine("Nat type {0}", result);
+            break;
+          }
+        }
+      }
+      return result;
     }
 
     public void Close() {

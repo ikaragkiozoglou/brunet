@@ -34,7 +34,7 @@ namespace Ipop.SocialVPN {
 
   public class SocialStatsManager {
 
-    public const char DELIM = ' ';
+    public const char DELIM = '_';
 
     public const double _exp_factor = 0.98;
 
@@ -65,7 +65,7 @@ namespace Ipop.SocialVPN {
         if(_latencies.TryGetValue(friend.Address, out latency)) {
           int lat = (int) latency;
           string stat = friend.Address.Substring(12, 4) + DELIM + lat +
-            DELIM + _node.GetStats(friend.Address) + "\n";
+            DELIM + _node.GetStats(friend.Address) + " ";
           result.Append(stat);
         }
       }

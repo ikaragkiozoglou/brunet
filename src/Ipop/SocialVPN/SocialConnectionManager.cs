@@ -242,6 +242,10 @@ namespace Ipop.SocialVPN {
           request["response"] = _sdm.GetState(request["q"]);
           return;
 
+        case "nat":
+          request["response"] = _node.GetNatType();
+          return;
+
         default:
           break;
       }
@@ -276,6 +280,10 @@ namespace Ipop.SocialVPN {
 
           case "GetStats":
             result = _ssm.GetStats();
+            break;
+
+          case "GetNat":
+            result = _node.GetNatType();
             break;
 
           default:

@@ -477,6 +477,8 @@ namespace Brunet.Transport {
     int _is_started;
     int _count;
     
+    public EdgeListener InternalEL { get { return _el; } }
+
     public PathEdgeListener(PathELManager pem, string path, EdgeListener el) {
       _path = path;
       _el = el;
