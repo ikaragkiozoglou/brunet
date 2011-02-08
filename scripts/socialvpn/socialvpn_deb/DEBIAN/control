@@ -1,7 +1,7 @@
 Package: socialvpn
 Priority: optional
 Section: net
-Version: 0.5.0
+Version: 0.5.1
 Maintainer: Pierre St Juste <ptony82@ufl.edu>
 Architecture: all
 Provides: socialvpn

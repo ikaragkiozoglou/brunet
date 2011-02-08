@@ -180,7 +180,6 @@ namespace Ipop.SocialVPN {
             NatTAs nat = pel.InternalEL.LocalTAs as NatTAs;
             nat.GetEnumerator();
             result = nat.NatHand.Value.GetType().ToString();
-            Console.WriteLine("Nat type {0}", result);
             break;
           }
         }

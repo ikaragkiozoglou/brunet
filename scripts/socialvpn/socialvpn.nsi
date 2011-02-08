@@ -1,8 +1,8 @@
 
 !include "MUI2.nsh"
 
-Name "SocialVPN 0.5.0"
-Outfile "socialvpn_0.5.0.exe"
+Name "SocialVPN 0.5.1"
+Outfile "socialvpn_0.5.1.exe"
 InstallDir "$PROGRAMFILES\SocialVPN"
 
 RequestExecutionLevel admin
@@ -139,7 +139,7 @@ Section -post SecPost
   CreateShortCut "$SMPROGRAMS\SocialVPN\Start SocialVPN (run as admin).lnk" "$INSTDIR\start_socialvpn.cmd"
   CreateShortCut "$SMPROGRAMS\SocialVPN\Stop SocialVPN (run as admin).lnk" "$INSTDIR\stop_socialvpn.cmd"
   CreateShortCut "$SMPROGRAMS\SocialVPN\SocialVPN Manager.lnk" "$INSTDIR\socialvpn_manager.html"
-  CreateShortCut "$SMPROGRAMS\SocialVPN\Uninstall.lnk SocialVPN" "$INSTDIR\Uninstall.exe"
+  CreateShortCut "$SMPROGRAMS\SocialVPN\Uninstall SocialVPN.lnk" "$INSTDIR\Uninstall.exe"
 
   CreateShortCut "$DESKTOP\Start SocialVPN (run as admin).lnk" "$INSTDIR\start_socialvpn.cmd"
   CreateShortCut "$DESKTOP\Stop SocialVPN (run as admin).lnk" "$INSTDIR\stop_socialvpn.cmd"
