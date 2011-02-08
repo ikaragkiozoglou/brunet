@@ -1,3 +1,9 @@
+0.5.1
+=====
+- Updated brunet library (better NAT traversal)
+- Add code to check NAT type
+- Add anonymous data collection RPC calls
+
 0.5.0
 =====
 - Installers for windows and Debian-based Linux distros
