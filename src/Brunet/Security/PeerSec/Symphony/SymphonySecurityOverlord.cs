@@ -97,6 +97,11 @@ namespace Brunet.Security.PeerSec.Symphony {
       return sa;
     }
 
+    // Checks to see if secure sender already exists
+    public bool ContainsSender(Address target) {
+      return _address_to_sa.ContainsKey(target);
+    }
+
     // We override the underlying method so that we can properly wrap incoming AHSenders
     override public PeerSecAssociation CreateSecurityAssociation(ISender sender, int spi)
     {

@@ -94,7 +94,9 @@ namespace Ipop.Managed {
     /// <returns></returns>
     protected override bool HandleMulticast(IPPacket ipp) {
       foreach(Address addr in _marad.mcast_addr) {
-        SendIP(addr, ipp.Packet);
+        if(AppNode.SymphonySecurityOverlord.ContainsSender(addr)) {
+          SendIP(addr, ipp.Packet);
+        }
       }
       return true;
     }
