@@ -183,7 +183,6 @@
         <include name="README.txt" />
         <include name="socialvpn" />
         <include name="socialvpn_manager.html" />
-        <include name="socialvpn.nsi" />
         <include name="start_socialvpn.cmd" />
         <include name="stop_socialvpn.cmd" />
       </fileset>

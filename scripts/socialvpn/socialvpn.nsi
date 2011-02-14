@@ -213,7 +213,7 @@ Section "Uninstall"
   Delete "$SMPROGRAMS\SocialVPN\Start SocialVPN (run as admin).lnk"
   Delete "$SMPROGRAMS\SocialVPN\Stop SocialVPN (run as admin).lnk"
   Delete "$SMPROGRAMS\SocialVPN\SocialVPN Manager.lnk"
-  Delete "$SMPROGRAMS\SocialVPN\Uninstall.lnk"
+  Delete "$SMPROGRAMS\SocialVPN\Uninstall SocialVPN.lnk"
   RMDir "$SMPROGRAMS\SocialVPN"
 
   Delete "$DESKTOP\Start SocialVPN (run as admin).lnk"
