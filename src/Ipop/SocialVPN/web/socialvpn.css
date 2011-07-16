@@ -45,43 +45,55 @@ body {
   width: 800px;
 }
 
+img.pic {
+  padding: 2px;
+  border: 1px solid #CCCCCC;
+}
+
 #userdiv {
   margin: 5px;
   padding: 5px;
-  height: 85px;
+  display: table;
 }
 
-#userpicdiv {
-  float: left;
+#userdiv div.pic {
+  display: table-cell;
+  vertical-align: top;
+}
+
+#userdiv div.pic img {
   margin: 5px 15px 5px 5px;
 }
 
-#usersubdiv {
-  float: left;
+#userdiv > div.info {
+  display: table-cell;
 }
 
-#usersubdiv h2 {
+#userdiv > div.info * {
   padding: 2px;
   margin: 2px;
+  font-weight: normal;
+}
+
+#userdiv > div.info .uid,
+#userdiv > div.info .info {
   font-size: 24px;
+}
+
+#userdiv > div.info .uid {
   font-weight: bold;
 }
 
-#usersubdiv h2 span {
-  font-weight: normal;
+#userdiv > div.info .info {
+  display: inline-block;
   color: #999999;
 }
 
-#usersubdiv span {
-  padding: 2px;
-  margin: 2px;
-  font-weight: normal;
+#userdiv > div.info .address {
   color: #999999;
 }
 
-#usersubdiv p {
-  padding: 2px;
-  margin: 2px;
+#userdiv > div.info .status {
   color: #3B5998;
 }
 
@@ -163,46 +175,41 @@ body {
   padding: 5px 0 0 0;
 }
 
-.name {
+#friendsdiv .name {
   font-size: 16px;
   font-weight: bold;
   color: #3B5998;
   margin: 0px 0px 5px 0px;
 }
 
-.name_b {
+#friendsdiv .name_b {
   font-size: 16px;
   font-weight: normal;
   color: #999999;
   margin: 0px 0px 5px 0px;
 }
 
-.name_c {
+#friendsdiv .name_c {
   font-size: 16px;
   font-weight: normal;
   color: #CC9999;
   margin: 0px 0px 5px 0px;
 }
 
-.name_d {
+#friendsdiv .name_d {
   font-size: 16px;
   font-weight: normal;
   color: #000000;
   margin: 0px 0px 5px 0px;
 }
 
-.info {
+#friendsdiv .info {
   font-size: 11px;
   margin: 0px 0px 2px 0px;
   color: #999999;
 }
 
-img {
-  padding: 2px;
-  border: 1px solid #CCCCCC;
-}
-
-.opts {
+#friendsdiv .opts {
   margin: 2px;
   padding: 0px;
   color: #3B5998;
@@ -210,11 +217,11 @@ img {
   cursor: pointer;
 }
 
-.opts:hover {
+#friendsdiv .opts:hover {
   text-decoration: underline;
 }
 
-.inbold {
+#inputdiv .inbold {
   font-weight : bold;
 }
 
