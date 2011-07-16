@@ -311,29 +311,27 @@ function parsePending(user) {
 
 function processUser(state) {
   $("#userdiv").text("");
-  $("<div/>", {'id' : 'userpicdiv'}).appendTo("#userdiv");
+  $("<div/>", {'class' : 'pic'}).appendTo("#userdiv");
   var user = parseUser($("LocalUser", state));
 
   var txt = "http://gravatar.com";
-  var link = $("<a/>", {'href' : txt, 'target' : '_blank'}).appendTo("#userpicdiv");
+  var link = $("<a/>", {'href' : txt, 'target' : '_blank'}).appendTo("#userdiv .pic");
 
   $("<img/>", {'src' : user.img, 'width' : '60px', 
-    'height' : '60px'}).appendTo(link);
+    'height' : '60px', 'class' : 'pic'}).appendTo(link);
 
-  $("<div/>", {'id' : 'usersubdiv'}).appendTo("#userdiv");
+  $("<div/>", {'class': 'info'}).appendTo("#userdiv");
 
   var info = " (" + user.pcid + " - " + user.ip + ")";
-  var h2 = $("<h2/>", {text : user.uid}).appendTo("#usersubdiv");
-  $("<span/>", {text : info}).appendTo(h2);
+  $("<span/>", {text : user.uid, 'class' : 'uid'}).appendTo("#userdiv > div.info");
+  $("<span/>", {text : info, 'class' : 'info'}).appendTo("#userdiv > div.info");
 
   var info = "P2P Address: " + user.address;
-  $("<span/>", {text : info, 'class' : 'address'}).appendTo("#usersubdiv");
-
-  $("<br/>").appendTo("#usersubdiv");
+  $("<div/>", {text : info, 'class' : 'address'}).appendTo("#userdiv > div.info");
 
   statusMsg = $("NetworkState > Message", prevState).text();
   var msg = "Status: " + statusMsg;
-  $("<p/>", {text : msg, id: 'statusMsg'}).appendTo("#usersubdiv");
+  $("<p/>", {text : msg, id: 'statusMsg', 'class' : 'status'}).appendTo("#userdiv > div.info");
 
   if(statusMsg.match("Online") != null) {
     $("#login").text("Logout");
@@ -392,7 +390,7 @@ function addFriend(user) {
   var link = $("<a/>", {'href' : txt, 'target' : '_blank'});
 
   $("<img/>",{'src' : user.img, 'width' : '30px', 
-    'height' : '30px'}).appendTo(link);
+    'height' : '30px', 'class' : 'pic'}).appendTo(link);
 
   imgcol.append(link);
 
