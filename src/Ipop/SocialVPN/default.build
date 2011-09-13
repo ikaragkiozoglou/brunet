@@ -124,6 +124,15 @@
       </references>
     </csc>
 
+    <csc target="exe" output="${build.dir}/unstruct.exe">
+      <sources failonempty="true">
+        <include name="UnstructuredNode.cs"/>
+      </sources>
+      <references basedir="${build.dir}">
+        <include name="Brunet.dll" />
+      </references>
+    </csc>
+
     <csc target="exe" output="${build.dir}/SocialVPNService.exe">
       <sources failonempty="true">
         <include name="Service/*.cs"/>

@@ -391,8 +391,8 @@ function addFriend(user) {
   var txt = "http://gravatar.com";
   var link = $("<a/>", {'href' : txt, 'target' : '_blank'});
 
-  $("<img/>",{'src' : user.img, 'width' : '30px', 
-    'height' : '30px'}).appendTo(link);
+  $("<img/>",{'src' : user.img, 'width' : '40px', 
+    'height' : '40px'}).appendTo(link);
 
   imgcol.append(link);
 
