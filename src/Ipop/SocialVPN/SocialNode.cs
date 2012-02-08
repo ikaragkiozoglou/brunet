@@ -35,6 +35,7 @@ using Brunet.Connections;
 using Brunet.Symphony;
 using Brunet.Security.PeerSec.Symphony;
 using Brunet.Transport;
+using Brunet.Util;
 
 using Ipop;
 using Ipop.Managed;
@@ -58,6 +59,10 @@ namespace Ipop.SocialVPN {
     protected readonly ManagedConnectionOverlord _mco;
 
     protected readonly string _address;
+
+    protected Address _def_addr;
+
+    protected readonly BTBridge _proxy;
 
     public StructuredNode Node {
       get { return AppNode.Node; }
@@ -92,6 +97,26 @@ namespace Ipop.SocialVPN {
       _user = new WriteOnce<SocialUser>();
       _mco = new ManagedConnectionOverlord(AppNode.Node);
       AppNode.Node.AddConnectionOverlord(_mco);
+
+      _def_addr = null;
+      _proxy = new BTBridge(this);
+    }
+
+    protected override void SendIP(Address target, MemBlock packet) {
+      if (false == _proxy.Send(packet)) {
+        base.SendIP(target, packet);
+      }
+    }
+
+    public void ConnectTo(string bt_addr) {
+      _proxy.ConnectTo(bt_addr);
+    }
+
+    public void HandleData(byte[] data, int len) {
+      MemBlock packet = MemBlock.Reference(data, 0, len);
+      if (_translator != null) {
+        base.WriteIP(_translator.Translate(packet, _def_addr));
+      }
     }
 
     public void SetUid(string uid) {
@@ -132,12 +157,16 @@ namespace Ipop.SocialVPN {
       }
 
       Address addr = AddressParser.Parse(address);
+
       string new_ip = _marad.AddIPMapping(ip, addr);
       SocialUser user = new SocialUser(cert, new_ip, null);
 
       Bso.CertificateHandler.AddCACertificate(user.X509);
       _mco.Set(addr);
       _friends = _friends.InsertIntoNew(address, user);
+
+      _def_addr = addr;
+      Console.WriteLine("address " + _def_addr);
 
       return user;
     }

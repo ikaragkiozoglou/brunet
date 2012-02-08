@@ -95,6 +95,7 @@
         <include name="JabberNetwork.cs"/>
         <include name="TestNetwork.cs"/>
         <include name="ISocialNetwork.cs"/>
+        <include name="BTBridge.cs"/>
       </sources>
       <references basedir="${build.dir}">
         <include name="Brunet.dll" />
