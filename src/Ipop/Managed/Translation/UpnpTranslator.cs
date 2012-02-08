@@ -41,6 +41,7 @@ namespace Ipop.Managed.Translation {
     public SsdpTranslator(MemBlock local_ip) : base(local_ip) { }
     
     public override bool MatchesProtocol(UdpPacket packet) {
+			//Console.WriteLine("This packet is UPnP packet: {0}, {1}", packet.DestinationPort, packet.SourcePort);
       return packet.DestinationPort == 1900 || packet.SourcePort == 1900;
     }
     
@@ -65,69 +66,74 @@ namespace Ipop.Managed.Translation {
     /// <returns>Returns the translated UDP packet</returns>
     public static UdpPacket UPnPTranslate(UdpPacket udpp, string newIP) {
       try {
-      string rawData = udpp.Payload.GetString(System.Text.Encoding.UTF8);
-      //Console.WriteLine("OLD PACKET:");
-      //Console.WriteLine(rawData+"\n");
-      StringBuilder data = new StringBuilder(rawData);
-      int httpDataStart = rawData.IndexOf("HTTP/")+5;
-      if(httpDataStart < 5) { return udpp; } //not an http packet, don't
-                                             //translate
-      int httpPeriod = rawData.IndexOf('.', httpDataStart);
-      int majorVersion = Int32.Parse(rawData.Substring(
-                                      httpDataStart, httpPeriod-httpDataStart
+      	string rawData = udpp.Payload.GetString(System.Text.Encoding.UTF8);
+      	//Console.WriteLine("OLD PACKET:");
+      	//Console.WriteLine(rawData+"\n");
+      	StringBuilder data = new StringBuilder(rawData);
+      	int httpDataStart = rawData.IndexOf("HTTP/")+5;
+      	if(httpDataStart < 5) { 
+      		return new UdpPacket(udpp.SourcePort, udpp.DestinationPort, MemBlock.Reference(Encoding.UTF8.GetBytes(data.ToString())));
+				} //not an http packet, don't
+        	                                     //translate
+      	int httpPeriod = rawData.IndexOf('.', httpDataStart);
+      	int majorVersion = Int32.Parse(rawData.Substring(
+        	                              httpDataStart, httpPeriod-httpDataStart
                                     ));
-      if(majorVersion != 1) {
-        ProtocolLog.WriteIf(
-          TranslateLog.VersionMismatch,
-          "Incompatable major version of an HTTP packet found: " +
-            majorVersion + ". Not performing translation on packet."
-        );
-        //Console.WriteLine("Bad major http version");
-        return udpp;
-      }
-      // TODO: This code is really slow, we need some regex up in here
-      //       also, the double Math.Min stuff is really hackish. Why doesn't
-      //       C# use varible length arguments for stuff like this? It can do it
-      int spaceIndex = rawData.IndexOf(' ', httpPeriod)+1;
-      int newLineIndex = rawData.IndexOf("\r\n", httpPeriod)+2;
-      if(spaceIndex < newLineIndex && spaceIndex > 0) {
-        httpDataStart = spaceIndex;
-      } else if(newLineIndex < spaceIndex && newLineIndex > 1) {
-        httpDataStart = newLineIndex;
-      } else { return udpp; } //contains no data!!!
+				//Console.WriteLine("majorVersion: {0}", majorVersion);
+      	if(majorVersion != 1) {
+        	ProtocolLog.WriteIf(
+          	TranslateLog.VersionMismatch,
+          	"Incompatable major version of an HTTP packet found: " +
+            	majorVersion + ". Not performing translation on packet."
+        	);
+        	//Console.WriteLine("Bad major http version");
+      		return new UdpPacket(udpp.SourcePort, udpp.DestinationPort, MemBlock.Reference(Encoding.UTF8.GetBytes(data.ToString())));
+      	}
+      	// TODO: This code is really slow, we need some regex up in here
+      	//       also, the double Math.Min stuff is really hackish. Why doesn't
+      	//       C# use varible length arguments for stuff like this? It can do it
+      	int spaceIndex = rawData.IndexOf(' ', httpPeriod)+1; //rawData.IndexOf(' ', httpPeriod) returned -1
+      	int newLineIndex = rawData.IndexOf("\r\n", httpPeriod)+2;
+      	if(spaceIndex < newLineIndex && spaceIndex > 0) {
+        	httpDataStart = spaceIndex;
+      	} else if(newLineIndex < spaceIndex && newLineIndex > 1) {
+        	httpDataStart = newLineIndex;
+      	} else { 
+					//return udpp; //contains no data!!!
+      	  return new UdpPacket(udpp.SourcePort, udpp.DestinationPort, MemBlock.Reference(Encoding.UTF8.GetBytes(data.ToString())));
+				}
       
-      int minorVersion = Int32.Parse(rawData.Substring(
-        httpPeriod+1, httpDataStart-httpPeriod-2
-      ));
-      if(minorVersion > 1) {
-        ProtocolLog.WriteIf(
-          TranslateLog.VersionMismatch,
-          "Possibly incompatable minor version of an HTTP packet found: " +
-            majorVersion + "." + minorVersion +
-            ", attempting to translate anyways."
-        );
-      }
-      //Console.WriteLine("HTTP Version: " + majorVersion + "." + minorVersion);
-      int sipLocation = rawData.IndexOf(
-        "://",
-        rawData.IndexOf("\r\nLOCATION: ", httpDataStart) + 12
-      ) + 3;
-      if(sipLocation < 3) { return udpp; } //doesn't contain LOCATION, don't
-                                           //translate
-      int eipLocation = Math.Min(
-        rawData.IndexOf(':', sipLocation), // specifies a port
-        rawData.IndexOf('/', sipLocation)  // doesn't specify a port
-      );
-      data.Remove(sipLocation, eipLocation-sipLocation);
-      data.Insert(sipLocation, newIP);
-      //Console.WriteLine("NEW PACKET:");
-      //Console.WriteLine(data.ToString());
-      return new UdpPacket(
-        udpp.SourcePort, udpp.DestinationPort,
-        MemBlock.Reference(Encoding.UTF8.GetBytes(data.ToString()))
-      );
+      	int minorVersion = Int32.Parse(rawData.Substring(
+        	httpPeriod+1, httpDataStart-httpPeriod-2
+      	));
+      	if(minorVersion > 1) {
+        	ProtocolLog.WriteIf(
+          	TranslateLog.VersionMismatch,
+          	"Possibly incompatable minor version of an HTTP packet found: " +
+            	majorVersion + "." + minorVersion +
+            	", attempting to translate anyways."
+        	);
+      	}
+      	//Console.WriteLine("HTTP Version: " + majorVersion + "." + minorVersion);
+      	int sipLocation = rawData.IndexOf(
+        	"://",
+        	rawData.IndexOf("\r\nLOCATION: ", httpDataStart) + 12
+      	) + 3;
+      	if(sipLocation < 3) { 
+      		return new UdpPacket(udpp.SourcePort, udpp.DestinationPort, MemBlock.Reference(Encoding.UTF8.GetBytes(data.ToString())));
+				} //doesn't contain LOCATION, don't
+      	                                     //translate
+      	int eipLocation = Math.Min(
+        	rawData.IndexOf(':', sipLocation), // specifies a port
+        	rawData.IndexOf('/', sipLocation)  // doesn't specify a port
+      	);
+      	data.Remove(sipLocation, eipLocation-sipLocation);
+      	data.Insert(sipLocation, newIP);
+      	//Console.WriteLine("NEW PACKET:");
+      	//Console.WriteLine(data.ToString());
+      	return new UdpPacket(udpp.SourcePort, udpp.DestinationPort, MemBlock.Reference(Encoding.UTF8.GetBytes(data.ToString())));
       } catch(Exception ex) {
-        //Console.WriteLine("EXCEPTION!!! " + ex.ToString());
+        Console.WriteLine("EXCEPTION!!! " + ex.ToString());
         return udpp;
       }
     }
