@@ -184,6 +184,10 @@ namespace Ipop.SocialVPN {
         request["a"] = "brunet:node:" + request["a"];
       }
       switch(method) {
+        case "btadd":
+          _node.ConnectTo(request["b"]);
+          break;
+
         case "add":
           AddToPending(request["a"]);
           if(request.ContainsKey("f")) {
