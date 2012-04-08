@@ -543,7 +543,9 @@ namespace Ipop.SocialVPN {
       }
 
       if(write) {
-        Utils.WriteConfig(STATEPATH, fstate);
+        try {
+          Utils.WriteConfig(STATEPATH, fstate);
+        } catch {}
       }
 
       return SocialUtils.ObjectToXml<SocialState>(state);

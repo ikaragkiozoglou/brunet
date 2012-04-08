@@ -208,7 +208,7 @@ namespace Ipop.SocialVPN {
           if(pel.InternalEL is UdpEdgeListener) {
             NatTAs nat = pel.InternalEL.LocalTAs as NatTAs;
             nat.GetEnumerator();
-            result = nat.NatHand.Value.GetType().ToString();
+            //result = nat.NatHand.Value.GetType().ToString();
             break;
           }
         }
@@ -235,14 +235,21 @@ namespace Ipop.SocialVPN {
       RSACryptoServiceProvider rsa = new RSACryptoServiceProvider();
 
       if(File.Exists(CONFIGPATH)) {
-        social_config = Utils.ReadConfig<SocialConfig>(CONFIGPATH);
+        try {
+          social_config = Utils.ReadConfig<SocialConfig>(CONFIGPATH);
+        } catch (Exception ex) {
+          Console.WriteLine("bad social.config");
+          social_config = SocialUtils.CreateConfig();
+        }
       }
       else {
         social_config = SocialUtils.CreateConfig();
       }
 
+
       node_config = Utils.ReadConfig<NodeConfig>(social_config.BrunetConfig);
       ipop_config = Utils.ReadConfig<IpopConfig>(social_config.IpopConfig);
+
 
       if(!File.Exists(node_config.Security.KeyPath) || 
         node_config.NodeAddress == null) {

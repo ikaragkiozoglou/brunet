@@ -205,7 +205,9 @@ namespace Ipop.SocialVPN {
 
     public void Login(string uid, string password) {
       if(!_xmpp.IsAuthenticated || !_message.StartsWith("Online")) {
-        _xmpp.Connect(uid, password, _host, _port);
+        try {
+          _xmpp.Connect(uid, password, _host, _port);
+        } catch {}
         _message = "...connecting...";
         _uid = uid;
         _password = password;

@@ -8,7 +8,7 @@
   <property name="docs.dir" value="../../../docs/socialvpn"/>
   <property name="scripts.dir" value="../../../scripts/socialvpn"/>
   <property name="web.dir" value="web"/>
-  <property name="release" value="socialvpn_0.5.1"/>
+  <property name="release" value="socialvpn_0.5.1c"/>
 
   <target name="clean" description="Remove build directory">
     <delete dir="${build.dir}" failonerror="true"/>
@@ -122,15 +122,6 @@
         <include name="Brunet.dll" />
         <include name="Ipop.Managed.dll" />
         <include name="SocialVPN.exe" />
-      </references>
-    </csc>
-
-    <csc target="exe" output="${build.dir}/unstruct.exe">
-      <sources failonempty="true">
-        <include name="UnstructuredNode.cs"/>
-      </sources>
-      <references basedir="${build.dir}">
-        <include name="Brunet.dll" />
       </references>
     </csc>
 
