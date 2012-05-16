@@ -73,8 +73,8 @@ namespace Ipop.SocialVPN {
       _mappings = ImmutableDictionary<string, DnsMapping>.Empty;
       _tmappings = ImmutableDictionary<string, DnsMapping>.Empty;
       _sender = new WriteOnce<IRpcSender>();
-      LoadState();
-      AddDnsMapping(System.Net.Dns.GetHostName());
+      //LoadState();
+      //AddDnsMapping(System.Net.Dns.GetHostName());
     }
 
     protected string GetAddress(string ip) {

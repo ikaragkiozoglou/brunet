@@ -25,6 +25,7 @@ using System.Collections;
 using System.Collections.Generic;
 using System.IO;
 using System.Security.Cryptography;
+using System.Text;
 
 using Brunet;
 using Brunet.Security;
@@ -36,6 +37,7 @@ using Brunet.Symphony;
 using Brunet.Security.PeerSec.Symphony;
 using Brunet.Transport;
 using Brunet.Util;
+using Brunet.Messaging;
 
 using Ipop;
 using Ipop.Managed;
@@ -46,7 +48,7 @@ using NUnit.Framework;
 
 namespace Ipop.SocialVPN {
 
-  public class SocialNode : ManagedIpopNode {
+  public class SocialNode : BasicNode, IDataHandler {
 
     public const string CONFIGPATH = "social.config";
 
@@ -56,20 +58,22 @@ namespace Ipop.SocialVPN {
 
     protected readonly RSACryptoServiceProvider _rsa;
 
-    protected readonly ManagedConnectionOverlord _mco;
+    protected ManagedConnectionOverlord _mco;
 
     protected readonly string _address;
 
-    protected Address _def_addr;
+    protected readonly SslProxy _proxy;
 
-    protected readonly BTBridge _proxy;
+    //protected Address _def_addr;
+
+    //protected readonly BTBridge _proxy;
 
     public StructuredNode Node {
-      get { return AppNode.Node; }
+      get { return _app_node.Node; }
     }
 
     public SymphonySecurityOverlord Bso {
-      get { return AppNode.SymphonySecurityOverlord; }
+      get { return _app_node.SymphonySecurityOverlord; }
     }
 
     public SocialUser LocalUser {
@@ -81,42 +85,77 @@ namespace Ipop.SocialVPN {
     }
 
     public string Address {
-      get { return _address; }
+      //get { return _address; }
+      get { return _app_node.Node.Address.ToString(); }
     }
 
     public string IP {
-      get { return _marad.LocalIP; }
+      //get { return _marad.LocalIP; }
+      get { return "0.0.0.0"; }
     }
 
     public SocialNode(NodeConfig brunetConfig, IpopConfig ipopConfig,
       RSACryptoServiceProvider rsa) 
-      : base(brunetConfig, ipopConfig) {
+      : base(brunetConfig) {
       _friends = ImmutableDictionary<string, SocialUser>.Empty;
       _rsa = rsa;
-      _address = AppNode.Node.Address.ToString();
       _user = new WriteOnce<SocialUser>();
-      _mco = new ManagedConnectionOverlord(AppNode.Node);
-      AppNode.Node.AddConnectionOverlord(_mco);
 
-      _def_addr = null;
+      /*
+      _address = _app_node.Node.Address.ToString();
       _proxy = new BTBridge(this);
+      _def_addr = null;
+      */
+
+      _proxy = new SslProxy(this);
+
     }
 
+    // this is ugly code hacking
+    public void SetSCM(SocialConnectionManager scm) {
+      _proxy.SetSCM(scm);
+    }
+
+    // We can only do these things after BasicNode created _app_node
+    public void FinishInit() {
+      _app_node.Node.GetTypeSource(PType.Protocol.IP).Subscribe(this, null);
+      _mco = new ManagedConnectionOverlord(_app_node.Node);
+      _app_node.Node.AddConnectionOverlord(_mco);
+      SetUid("testing");
+    }
+
+    /*
     protected override void SendIP(Address target, MemBlock packet) {
       if (false == _proxy.Send(packet)) {
         base.SendIP(target, packet);
       }
+
+    }
+    */
+
+    public void SendIP(MemBlock packet, Address target) {
+      try {
+        ISender s;
+        s = Bso.GetSecureSender(target);
+        s.Send(new CopyList(PType.Protocol.IP, packet));
+      } catch (Exception e) { Console.WriteLine(e); }
     }
 
     public void ConnectTo(string bt_addr) {
-      _proxy.ConnectTo(bt_addr);
+      //_proxy.ConnectTo(bt_addr);
+    }
+
+    public void HandleData(MemBlock b, ISender ret, object state) {
+      ISender sender = ((SecurityAssociation) ret).Sender;
+      string source = ((AHSender)sender).Destination.ToString();
+      _proxy.Write(b, b.Length, source);
     }
 
     public void HandleData(byte[] data, int len) {
       MemBlock packet = MemBlock.Reference(data, 0, len);
-      if (_translator != null) {
-        base.WriteIP(_translator.Translate(packet, _def_addr));
-      }
+      //if (_translator != null) {
+      //  base.WriteIP(_translator.Translate(packet, _def_addr));
+      //}
     }
 
     public void SetUid(string uid) {
@@ -158,15 +197,16 @@ namespace Ipop.SocialVPN {
 
       Address addr = AddressParser.Parse(address);
 
-      string new_ip = _marad.AddIPMapping(ip, addr);
+      //string new_ip = _marad.AddIPMapping(ip, addr);
+      string new_ip = "0.0.0.0";
       SocialUser user = new SocialUser(cert, new_ip, null);
 
       Bso.CertificateHandler.AddCACertificate(user.X509);
       _mco.Set(addr);
       _friends = _friends.InsertIntoNew(address, user);
 
-      _def_addr = addr;
-      Console.WriteLine("address " + _def_addr);
+      //_def_addr = addr;
+      //Console.WriteLine("address " + _def_addr);
 
       return user;
     }
@@ -176,7 +216,7 @@ namespace Ipop.SocialVPN {
       Address addr = AddressParser.Parse(user.Address);
 
       _mco.Unset(addr);
-      _marad.RemoveIPMapping(user.IP);
+      //_marad.RemoveIPMapping(user.IP);
 
       ImmutableDictionary<string, SocialUser> old;
       _friends = _friends.RemoveFromNew(address, out old);
@@ -184,25 +224,27 @@ namespace Ipop.SocialVPN {
 
     public void Block(string address) {
       SocialUser user = _friends[address];
-      _marad.RemoveIPMapping(user.IP);
+      //_marad.RemoveIPMapping(user.IP);
     }
 
     public void Unblock(string address) {
       SocialUser user = _friends[address];
-      _marad.AddIPMapping(user.IP, AddressParser.Parse(address));
+      //_marad.AddIPMapping(user.IP, AddressParser.Parse(address));
     }
 
     public bool IsAllowed(string address) {
-      return _marad.mcast_addr.Contains(AddressParser.Parse(address));
+      //return _marad.mcast_addr.Contains(AddressParser.Parse(address));
+      return true;
     }
 
     public string GetStats(string address) {
-      return _marad.GetStats(address);
+      //return _marad.GetStats(address);
+      return "stats";
     }
 
     public string GetNatType() {
       string result = String.Empty;
-      foreach(EdgeListener el in AppNode.Node.EdgeListenerList) {
+      foreach(EdgeListener el in _app_node.Node.EdgeListenerList) {
         if(el is PathEdgeListener) {
           PathEdgeListener pel = el as PathEdgeListener;
           if(pel.InternalEL is UdpEdgeListener) {
@@ -223,8 +265,8 @@ namespace Ipop.SocialVPN {
     }
 
     protected void HandleShutdown(object state) {
-      IpopNode node = state as IpopNode;
-      node.Shutdown.Exit();
+      //IpopNode node = state as IpopNode;
+      //node.Shutdown.Exit();
     }
 
     public static new SocialNode CreateNode() {
@@ -270,8 +312,11 @@ namespace Ipop.SocialVPN {
       SocialStatsManager ssm = new SocialStatsManager(node);
 
       SocialConnectionManager manager = new SocialConnectionManager(node,
-        node.AppNode.Node.Rpc, sdm, ssm, social_config);
+        sdm, ssm, social_config);
 
+      node.SetSCM(manager);
+
+      /*
       JabberNetwork jabber = new JabberNetwork(social_config.JabberID, 
         social_config.JabberPass, social_config.JabberHost, 
         social_config.JabberPort);
@@ -293,6 +338,7 @@ namespace Ipop.SocialVPN {
       node.Shutdown.OnExit += jabber.Logout;
       node.Shutdown.OnExit += http.Stop;
       http.Start();
+      */
 #endif
 
       return node;

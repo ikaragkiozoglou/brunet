@@ -52,8 +52,8 @@ namespace Ipop.SocialVPN {
       social_config.JabberID = "user@example.com";
       social_config.JabberPass = "password";
       social_config.AutoLogin = false;
-      social_config.GlobalBlock = true;
-      social_config.AutoFriend = false;
+      social_config.GlobalBlock = false;
+      social_config.AutoFriend = true;
       social_config.AutoDns = true;
       Utils.WriteConfig(SocialNode.CONFIGPATH, social_config);
       return social_config;

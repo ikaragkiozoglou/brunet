@@ -102,7 +102,7 @@ namespace Ipop.SocialVPN {
 
     protected readonly SocialNode _node;
 
-    protected readonly RpcManager _rpc;
+    protected RpcManager _rpc;
 
     protected readonly SocialDnsManager _sdm;
 
@@ -128,11 +128,10 @@ namespace Ipop.SocialVPN {
 
     public ImmutableList<string> Blocked { get { return _blocked; }}
 
-    public SocialConnectionManager(SocialNode node, RpcManager rpc,
+    public SocialConnectionManager(SocialNode node,
       SocialDnsManager sdm, SocialStatsManager ssm, SocialConfig config) {
-      _rpc = rpc;
-      _rpc.AddHandler(RPCID, this);
       _sdm = sdm;
+      _rpc = null;
       _node = node;
       _ssm = ssm;
       _networks = ImmutableDictionary<string, ISocialNetwork>.Empty;
@@ -155,6 +154,11 @@ namespace Ipop.SocialVPN {
     }
 
     public void TimerHandler(object obj) {
+      if (_rpc == null && _beat_counter % 2 == 0) {
+        _rpc = _node.Node.Rpc;
+        _rpc.AddHandler(RPCID, this);
+        _node.FinishInit();
+      }
       if(_beat_counter % 6 == 0) {
         PingFriends();
         GetPending();
@@ -290,6 +294,10 @@ namespace Ipop.SocialVPN {
             result = _node.GetNatType();
             break;
 
+          case "ping":
+            result = "pong";
+            break;
+
           default:
             result = new InvalidOperationException("Invalid Method");
             break;
@@ -372,6 +380,7 @@ namespace Ipop.SocialVPN {
       if(!_auto_allow && !IsVerified(user)) {
         _node.Block(user.Address);
       }
+      GetState(true);
     }
 
     protected bool IsVerified(SocialUser user) {
@@ -441,10 +450,11 @@ namespace Ipop.SocialVPN {
       }
     }
 
-    protected void AddToPending(string address) {
+    public void AddToPending(string address) {
       if(!_node.Friends.ContainsKey(address) && address != _node.Address &&
         !_pending.Contains(address)) {
         _pending = _pending.PushIntoNew(address);
+        SendCertRequest(address);
       }
     }
 
