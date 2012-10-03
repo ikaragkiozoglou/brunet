@@ -1,0 +1,267 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="4.0" DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <PropertyGroup>
+    <Configuration Condition=" '$(Configuration)' == '' ">Debug</Configuration>
+    <Platform Condition=" '$(Platform)' == '' ">x86</Platform>
+    <ProductVersion>8.0.30703</ProductVersion>
+    <SchemaVersion>2.0</SchemaVersion>
+    <ProjectGuid>{F9ADA8DB-4A70-47AA-BF65-DFE7AECE5361}</ProjectGuid>
+    <OutputType>Library</OutputType>
+    <AppDesignerFolder>Properties</AppDesignerFolder>
+    <RootNamespace>Brunet</RootNamespace>
+    <AssemblyName>Brunet</AssemblyName>
+    <TargetFrameworkVersion>v3.5</TargetFrameworkVersion>
+    <FileAlignment>512</FileAlignment>
+  </PropertyGroup>
+  <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Debug|x86' ">
+    <PlatformTarget>x86</PlatformTarget>
+    <DebugSymbols>true</DebugSymbols>
+    <DebugType>full</DebugType>
+    <Optimize>false</Optimize>
+    <OutputPath>bin\Debug\</OutputPath>
+    <DefineConstants>DEBUG;TRACE</DefineConstants>
+    <ErrorReport>prompt</ErrorReport>
+    <WarningLevel>4</WarningLevel>
+  </PropertyGroup>
+  <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Release|x86' ">
+    <PlatformTarget>x86</PlatformTarget>
+    <DebugType>pdbonly</DebugType>
+    <Optimize>true</Optimize>
+    <OutputPath>bin\Release\</OutputPath>
+    <DefineConstants>TRACE</DefineConstants>
+    <ErrorReport>prompt</ErrorReport>
+    <WarningLevel>4</WarningLevel>
+  </PropertyGroup>
+  <PropertyGroup>
+    <StartupObject>
+    </StartupObject>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="Address.cs" />
+    <Compile Include="AddressParser.cs" />
+    <Compile Include="Applications\ApplicationNode.cs" />
+    <Compile Include="Applications\BasicNode.cs" />
+    <Compile Include="Applications\ConfigurationValidator.cs" />
+    <Compile Include="Applications\Information.cs" />
+    <Compile Include="Applications\IPAddresses.cs" />
+    <Compile Include="Applications\MultiNode.cs" />
+    <Compile Include="Applications\NodeConfig.cs" />
+    <Compile Include="Applications\OSDependent.cs" />
+    <Compile Include="Applications\P2PNode.cs" />
+    <Compile Include="Applications\RuntimeParameters.cs" />
+    <Compile Include="Applications\Shutdown.cs" />
+    <Compile Include="Applications\Utils.cs" />
+    <Compile Include="Collections\Cache.cs" />
+    <Compile Include="Collections\CacheLinkedList.cs" />
+    <Compile Include="Collections\Functional.cs" />
+    <Compile Include="Collections\Heap.cs" />
+    <Compile Include="Collections\ImmutableDictionary.cs" />
+    <Compile Include="Collections\ImmutableList.cs" />
+    <Compile Include="Collections\Interval.cs" />
+    <Compile Include="Collections\TimeBasedCache.cs" />
+    <Compile Include="Collections\Tuple.cs" />
+    <Compile Include="Collections\UidGenerator.cs" />
+    <Compile Include="Collections\WeakHashtable.cs" />
+    <Compile Include="Collections\WeakValueTable.cs" />
+    <Compile Include="Concurrent\BlockingQueue.cs" />
+    <Compile Include="Concurrent\ExclusiveServer.cs" />
+    <Compile Include="Concurrent\FireOnceEvent.cs" />
+    <Compile Include="Concurrent\LockFreeQueue.cs" />
+    <Compile Include="Concurrent\Mutable.cs" />
+    <Compile Include="Concurrent\TaskQueue.cs" />
+    <Compile Include="Concurrent\WriteOnce.cs" />
+    <Compile Include="Concurrent\WriteOnceIdempotent.cs" />
+    <Compile Include="Connections\CloseMessage.cs" />
+    <Compile Include="Connections\Connection.cs" />
+    <Compile Include="Connections\ConnectionEventArgs.cs" />
+    <Compile Include="Connections\ConnectionOverlord.cs" />
+    <Compile Include="Connections\ConnectionPacketHandler.cs" />
+    <Compile Include="Connections\ConnectionTable.cs" />
+    <Compile Include="Connections\Connector.cs" />
+    <Compile Include="Connections\ConnectToMessage.cs" />
+    <Compile Include="Connections\CtmRequestHandler.cs" />
+    <Compile Include="Connections\ErrorMessage.cs" />
+    <Compile Include="Connections\ILinkLocker.cs" />
+    <Compile Include="Connections\Linker.cs" />
+    <Compile Include="Connections\LinkException.cs" />
+    <Compile Include="Connections\LinkMessage.cs" />
+    <Compile Include="Connections\LinkProtocolState.cs" />
+    <Compile Include="Connections\ManagedConnectionOverlord.cs" />
+    <Compile Include="Connections\NodeInfo.cs" />
+    <Compile Include="Connections\OnDemandConnectionOverlord.cs" />
+    <Compile Include="Connections\PolicyBasedConnectionOverlord.cs" />
+    <Compile Include="Connections\StatusMessage.cs" />
+    <Compile Include="DateTime.cs" />
+    <Compile Include="Messaging\BrunetRpc.cs" />
+    <Compile Include="Messaging\EchoHandler.cs" />
+    <Compile Include="Messaging\Filter.cs" />
+    <Compile Include="Messaging\IdentifierPair.cs" />
+    <Compile Include="Messaging\IdentifierTable.cs" />
+    <Compile Include="Messaging\IPHandler.cs" />
+    <Compile Include="Messaging\IReplyHandler.cs" />
+    <Compile Include="Messaging\ISender.cs" />
+    <Compile Include="Messaging\ReqrepManager.cs" />
+    <Compile Include="Messaging\RpcManager.cs" />
+    <Compile Include="Messaging\SenderFactory.cs" />
+    <Compile Include="Messaging\Source.cs" />
+    <Compile Include="Node.cs" />
+    <Compile Include="Relay\ForwarderSelector.cs" />
+    <Compile Include="Relay\OverlapConnectionOverlord.cs" />
+    <Compile Include="Relay\RelayEdge.cs" />
+    <Compile Include="Relay\RelayEdgeListener.cs" />
+    <Compile Include="Relay\RelayOverlap.cs" />
+    <Compile Include="Relay\RelayTransportAddress.cs" />
+    <Compile Include="Security\BroadcastRevocationHandler.cs" />
+    <Compile Include="Security\CertificateHandler.cs" />
+    <Compile Include="Security\CertificateMaker.cs" />
+    <Compile Include="Security\Dtls\DtlsAssociation.cs" />
+    <Compile Include="Security\Dtls\DtlsOverlord.cs" />
+    <Compile Include="Security\Dtls\OpenSslCertificateHandler.cs" />
+    <Compile Include="Security\ICertificateVerification.cs" />
+    <Compile Include="Security\PeerSec\DataPacket.cs" />
+    <Compile Include="Security\PeerSec\NullEncryption.cs" />
+    <Compile Include="Security\PeerSec\NullHash.cs" />
+    <Compile Include="Security\PeerSec\PeerSecAssociation.cs" />
+    <Compile Include="Security\PeerSec\PeerSecOverlord.cs" />
+    <Compile Include="Security\PeerSec\SecurityControlMessage.cs" />
+    <Compile Include="Security\PeerSec\SecurityDataMessage.cs" />
+    <Compile Include="Security\PeerSec\SecurityHandler.cs" />
+    <Compile Include="Security\PeerSec\SecurityPolicy.cs" />
+    <Compile Include="Security\PeerSec\SymmetricEncryption.cs" />
+    <Compile Include="Security\PeerSec\Symphony\EdgeVerification.cs" />
+    <Compile Include="Security\PeerSec\Symphony\SymphonySecurityOverlord.cs" />
+    <Compile Include="Security\PeerSec\Symphony\SymphonyVerification.cs" />
+    <Compile Include="Security\SecurityAssociation.cs" />
+    <Compile Include="Security\SecurityOverlord.cs" />
+    <Compile Include="Security\Transport\SecureEdge.cs" />
+    <Compile Include="Security\Transport\SecureEdgeListener.cs" />
+    <Compile Include="Security\UserRevocationMessage.cs" />
+    <Compile Include="Security\Utils\Keymaker.cs" />
+    <Compile Include="Security\Utils\RSAPrivateKeyToDER.cs" />
+    <Compile Include="Services\CodeInjection.cs" />
+    <Compile Include="Services\Coordinate\NCRelayOverlap.cs" />
+    <Compile Include="Services\Coordinate\NCService.cs" />
+    <Compile Include="Services\Coordinate\Point.cs" />
+    <Compile Include="Services\Coordinate\Sample.cs" />
+    <Compile Include="Services\Coordinate\VivaldiTargetSelector.cs" />
+    <Compile Include="Services\Dht\Dht.cs" />
+    <Compile Include="Services\Dht\DhtDiscovery.cs" />
+    <Compile Include="Services\Dht\Entry.cs" />
+    <Compile Include="Services\Dht\IDht.cs" />
+    <Compile Include="Services\Dht\RpcDht.cs" />
+    <Compile Include="Services\Dht\RpcDhtProxy.cs" />
+    <Compile Include="Services\Dht\TableServer.cs" />
+    <Compile Include="Services\Dht\TableServerData.cs" />
+    <Compile Include="Services\MapReduce\MapReduce.cs" />
+    <Compile Include="Services\MapReduce\MapReduceBaseTasks.cs" />
+    <Compile Include="Services\MapReduce\MapReduceRangeCounter.cs" />
+    <Compile Include="Services\MapReduce\MapReduceTrace.cs" />
+    <Compile Include="Services\XmlRpc\AdrXmlRpcConverter.cs" />
+    <Compile Include="Services\XmlRpc\XmlRpcManager.cs" />
+    <Compile Include="Symphony\AHAddress.cs" />
+    <Compile Include="Symphony\AHAddressComparer.cs" />
+    <Compile Include="Symphony\AHSender.cs" />
+    <Compile Include="Symphony\BroadcastHandler.cs" />
+    <Compile Include="Symphony\BroadcastReceiver.cs" />
+    <Compile Include="Symphony\BroadcastSender.cs" />
+    <Compile Include="Symphony\DirectionalAddress.cs" />
+    <Compile Include="Symphony\LeafConnectionOverlord.cs" />
+    <Compile Include="Symphony\PacketForwarder.cs" />
+    <Compile Include="Symphony\StructuredAddress.cs" />
+    <Compile Include="Symphony\StructuredNearConnectionOverlord.cs" />
+    <Compile Include="Symphony\StructuredNode.cs" />
+    <Compile Include="Symphony\StructuredShortcutConnectionOverlord.cs" />
+    <Compile Include="Symphony\SubringEdge.cs" />
+    <Compile Include="Symphony\SubringEdgeListener.cs" />
+    <Compile Include="Symphony\SubringTransportAddress.cs" />
+    <Compile Include="Symphony\TargetSelector.cs" />
+    <Compile Include="Symphony\TraceRpcHandler.cs" />
+    <Compile Include="Transport\Discovery.cs" />
+    <Compile Include="Transport\Edge.cs" />
+    <Compile Include="Transport\EdgeException.cs" />
+    <Compile Include="Transport\EdgeFactory.cs" />
+    <Compile Include="Transport\EdgeListener.cs" />
+    <Compile Include="Transport\FakeEdge.cs" />
+    <Compile Include="Transport\FunctionEdge.cs" />
+    <Compile Include="Transport\FunctionEdgeListener.cs" />
+    <Compile Include="Transport\ITAHandler.cs" />
+    <Compile Include="Transport\LocalDiscovery.cs" />
+    <Compile Include="Transport\NatHandler.cs" />
+    <Compile Include="Transport\PathEdgeListener.cs" />
+    <Compile Include="Transport\SimulationEdge.cs" />
+    <Compile Include="Transport\SimulationEdgeListener.cs" />
+    <Compile Include="Transport\TAAuthorizer.cs" />
+    <Compile Include="Transport\TcpEdge.cs" />
+    <Compile Include="Transport\TcpEdgeListener.cs" />
+    <Compile Include="Transport\TransportAddress.cs" />
+    <Compile Include="Transport\UdpEdge.cs" />
+    <Compile Include="Transport\UdpEdgeListener.cs" />
+    <Compile Include="Transport\WrapperEdge.cs" />
+    <Compile Include="Transport\WrapperEdgeListener.cs" />
+    <Compile Include="Util\AdrConverter.cs" />
+    <Compile Include="Util\Base32.cs" />
+    <Compile Include="Util\BigInteger.cs" />
+    <Compile Include="Util\BufferAllocator.cs" />
+    <Compile Include="Util\FuzzyTimer.cs" />
+    <Compile Include="Util\ICopyable.cs" />
+    <Compile Include="Util\Log.cs" />
+    <Compile Include="Util\MemBlock.cs" />
+    <Compile Include="Util\NumberSerializer.cs" />
+    <Compile Include="Util\ParseException.cs" />
+    <Compile Include="Util\PType.cs" />
+    <Compile Include="Util\Scheduler.cs" />
+    <Compile Include="Util\SecureRandom.cs" />
+    <Compile Include="Util\SimpleTimer.cs" />
+    <Compile Include="Xmpp\XmppDiscovery.cs" />
+    <Compile Include="Xmpp\XmppEdge.cs" />
+    <Compile Include="Xmpp\XmppEdgeListener.cs" />
+    <Compile Include="Xmpp\XmppRelay.cs" />
+    <Compile Include="Xmpp\XmppService.cs" />
+    <Compile Include="Xmpp\XmppTA.cs" />
+    <Compile Include="Xmpp\XmppTransportAddress.cs" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="Applications\Node.xsd">
+      <SubType>Designer</SubType>
+    </None>
+  </ItemGroup>
+  <ItemGroup>
+    <Reference Include="CookComputing.XmlRpcV2">
+      <HintPath>..\..\..\..\..\Downloads\ptony82-brunet-26e6e75\lib\CookComputing.XmlRpcV2.dll</HintPath>
+    </Reference>
+    <Reference Include="jabber-net, Version=2.0.0.613, Culture=neutral, PublicKeyToken=924c5b18328d6f09, processorArchitecture=MSIL">
+      <SpecificVersion>False</SpecificVersion>
+      <HintPath>..\..\..\..\..\Downloads\ptony82-brunet-26e6e75\lib\jabber-net.dll</HintPath>
+    </Reference>
+    <Reference Include="ManagedOpenSsl">
+      <HintPath>..\..\..\..\..\Downloads\ptony82-brunet-26e6e75\lib\ManagedOpenSsl.dll</HintPath>
+    </Reference>
+    <Reference Include="Mono.Posix, Version=2.0.0.0, Culture=neutral, PublicKeyToken=0738eb9f132ed756, processorArchitecture=MSIL">
+      <SpecificVersion>False</SpecificVersion>
+      <HintPath>..\..\..\..\..\Downloads\ptony82-brunet-26e6e75\lib\Mono.Posix.dll</HintPath>
+    </Reference>
+    <Reference Include="Mono.Security">
+      <HintPath>..\..\..\..\..\Downloads\ptony82-brunet-26e6e75\lib\Mono.Security.dll</HintPath>
+    </Reference>
+    <Reference Include="NDesk.Options">
+      <HintPath>..\..\..\..\..\Downloads\ptony82-brunet-26e6e75\lib\NDesk.Options.dll</HintPath>
+    </Reference>
+    <Reference Include="System" />
+    <Reference Include="System.Net" />
+    <Reference Include="System.Runtime.Remoting" />
+    <Reference Include="System.Security" />
+    <Reference Include="System.Web" />
+    <Reference Include="System.XML" />
+    <Reference Include="zlib.net">
+      <HintPath>..\..\..\..\..\Downloads\ptony82-brunet-26e6e75\lib\zlib.net.dll</HintPath>
+    </Reference>
+  </ItemGroup>
+  <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
+  <!-- To modify your build process, add your task inside one of the targets below and uncomment it. 
+       Other similar extension points exist, see Microsoft.Common.targets.
+  <Target Name="BeforeBuild">
+  </Target>
+  <Target Name="AfterBuild">
+  </Target>
+  -->
+</Project>
